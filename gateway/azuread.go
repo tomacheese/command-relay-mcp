@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -60,6 +61,56 @@ func newAzureADTokenVerifier(idv *oidc.IDTokenVerifier) auth.TokenVerifier {
 		}
 		return &auth.TokenInfo{UserID: userID, Expiration: idToken.Expiry, Scopes: scopes}, nil
 	}
+}
+
+// NewAzureADAuthServerMetadataHandler serves an RFC 8414 authorization
+// server metadata document at selfIssuer, mirroring Azure AD's real OIDC
+// discovery document but adding "code_challenge_methods_supported":
+// ["S256"]. Azure AD accepts PKCE/S256 on its real authorize/token
+// endpoints but never advertises it in discovery; strict clients (e.g.
+// ChatGPT's apps_sdk validator) reject an authorization server whose
+// metadata doesn't say so, even though the flow itself would work.
+// selfIssuer must match this Gateway's own authorization_servers entry —
+// RFC 8414 §3 requires the document's "issuer" to equal the URL it was
+// fetched from. This proxy only affects what clients see at discovery
+// time; token verification (NewAzureADVerifier) still validates against
+// Azure's real issuer and is unaffected by it.
+func NewAzureADAuthServerMetadataHandler(ctx context.Context, tenantID, selfIssuer string) (http.HandlerFunc, error) {
+	issuer := "https://login.microsoftonline.com/" + tenantID + "/v2.0"
+	provider, err := oidc.NewProvider(ctx, issuer)
+	if err != nil {
+		return nil, fmt.Errorf("azure ad discovery: %w", err)
+	}
+	var metadata map[string]any
+	if err := provider.Claims(&metadata); err != nil {
+		return nil, fmt.Errorf("azure ad discovery: reading raw metadata: %w", err)
+	}
+	body, err := buildAzureADAuthServerMetadataBody(metadata, selfIssuer)
+	if err != nil {
+		return nil, err
+	}
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}, nil
+}
+
+// buildAzureADAuthServerMetadataBody is split out from
+// NewAzureADAuthServerMetadataHandler so tests can drive it directly on a
+// literal metadata map, without any network call or live Azure tenant —
+// mirroring how newAzureADTokenVerifier is split out for the same reason.
+func buildAzureADAuthServerMetadataBody(azureMetadata map[string]any, selfIssuer string) ([]byte, error) {
+	merged := make(map[string]any, len(azureMetadata)+2)
+	for k, v := range azureMetadata {
+		merged[k] = v
+	}
+	merged["issuer"] = selfIssuer
+	merged["code_challenge_methods_supported"] = []string{"S256"}
+	body, err := json.Marshal(merged)
+	if err != nil {
+		return nil, fmt.Errorf("azure ad discovery: encoding proxied metadata: %w", err)
+	}
+	return body, nil
 }
 
 // logAzureADAuthFailure mirrors NewFixedBearerVerifier's own log line —

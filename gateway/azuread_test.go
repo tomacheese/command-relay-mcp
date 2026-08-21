@@ -160,6 +160,39 @@ func TestAzureADVerifier_RejectsBadSignature(t *testing.T) {
 	}
 }
 
+// TestBuildAzureADAuthServerMetadataBody_AddsPKCESupportAndSelfIssuer
+// covers the rationale documented on NewAzureADAuthServerMetadataHandler.
+func TestBuildAzureADAuthServerMetadataBody_AddsPKCESupportAndSelfIssuer(t *testing.T) {
+	azureMetadata := map[string]any{
+		"issuer":                 testIssuer,
+		"authorization_endpoint": testIssuer + "/oauth2/v2.0/authorize",
+		"token_endpoint":         testIssuer + "/oauth2/v2.0/token",
+	}
+
+	body, err := buildAzureADAuthServerMetadataBody(azureMetadata, "https://gateway.example.invalid")
+	if err != nil {
+		t.Fatalf("buildAzureADAuthServerMetadataBody: %v", err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got["issuer"] != "https://gateway.example.invalid" {
+		t.Fatalf("issuer = %v, want the Gateway's own origin", got["issuer"])
+	}
+	methods, ok := got["code_challenge_methods_supported"].([]any)
+	if !ok || len(methods) != 1 || methods[0] != "S256" {
+		t.Fatalf("code_challenge_methods_supported = %v, want [\"S256\"]", got["code_challenge_methods_supported"])
+	}
+	if got["authorization_endpoint"] != testIssuer+"/oauth2/v2.0/authorize" {
+		t.Fatalf("authorization_endpoint = %v, want Azure's real endpoint preserved", got["authorization_endpoint"])
+	}
+	if got["token_endpoint"] != testIssuer+"/oauth2/v2.0/token" {
+		t.Fatalf("token_endpoint = %v, want Azure's real endpoint preserved", got["token_endpoint"])
+	}
+}
+
 // TestAzureADVerifier_LogsAuthenticationFailure covers the Gateway's
 // "authentication failure" logging for the Azure AD verifier path —
 // the fixed-bearer-token verifier already logs this (gateway/bearer.go);
