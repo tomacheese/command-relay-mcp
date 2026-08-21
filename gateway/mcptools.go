@@ -103,13 +103,13 @@ func NewMCPHTTPHandler(reg *Registry, bearerToken string) http.Handler {
 // requiredScopes, when non-empty, are enforced against the token's own
 // scopes for every tool alike; leave it empty to trust any
 // audience-valid token for every tool (this project's V1 default).
-func NewMCPHTTPHandlerWithVerifier(reg *Registry, verifier auth.TokenVerifier, requiredScopes []string) http.Handler {
+// resourceMetadataURL is always set on the 401's WWW-Authenticate header
+// (RFC 9728): without it, a client that starts with an unauthenticated
+// request has no way to discover where OAuth is configured.
+func NewMCPHTTPHandlerWithVerifier(reg *Registry, verifier auth.TokenVerifier, requiredScopes []string, resourceMetadataURL string) http.Handler {
 	server := NewMCPServer(reg)
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return server }, nil)
-	var opts *auth.RequireBearerTokenOptions
-	if len(requiredScopes) > 0 {
-		opts = &auth.RequireBearerTokenOptions{Scopes: requiredScopes}
-	}
+	opts := &auth.RequireBearerTokenOptions{ResourceMetadataURL: resourceMetadataURL, Scopes: requiredScopes}
 	return auth.RequireBearerToken(verifier, opts)(mcpHandler)
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,7 +123,7 @@ func TestNewMCPHTTPHandlerWithVerifier_UsesGivenVerifier(t *testing.T) {
 		}
 		return &auth.TokenInfo{Expiration: time.Now().Add(time.Hour)}, nil
 	}
-	handler := NewMCPHTTPHandlerWithVerifier(reg, verifier, nil)
+	handler := NewMCPHTTPHandlerWithVerifier(reg, verifier, nil, "https://gateway.example.invalid/.well-known/oauth-protected-resource")
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
@@ -139,12 +140,35 @@ func TestNewMCPHTTPHandlerWithVerifier_UsesGivenVerifier(t *testing.T) {
 	}
 }
 
+func TestNewMCPHTTPHandlerWithVerifier_SetsResourceMetadataOnUnauthenticated(t *testing.T) {
+	reg := NewRegistry()
+	verifier := func(ctx context.Context, presented string, req *http.Request) (*auth.TokenInfo, error) {
+		return nil, auth.ErrInvalidToken
+	}
+	handler := NewMCPHTTPHandlerWithVerifier(reg, verifier, nil, "https://gateway.example.invalid/.well-known/oauth-protected-resource")
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL, "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+	wwwAuth := resp.Header.Get("WWW-Authenticate")
+	if !strings.Contains(wwwAuth, `resource_metadata="https://gateway.example.invalid/.well-known/oauth-protected-resource"`) {
+		t.Fatalf("WWW-Authenticate = %q, want it to reference the resource metadata URL", wwwAuth)
+	}
+}
+
 func TestNewMCPHTTPHandlerWithVerifier_EnforcesRequiredScopes(t *testing.T) {
 	reg := NewRegistry()
 	verifier := func(ctx context.Context, presented string, req *http.Request) (*auth.TokenInfo, error) {
 		return &auth.TokenInfo{Expiration: time.Now().Add(time.Hour), Scopes: []string{"read"}}, nil
 	}
-	handler := NewMCPHTTPHandlerWithVerifier(reg, verifier, []string{"admin"})
+	handler := NewMCPHTTPHandlerWithVerifier(reg, verifier, []string{"admin"}, "https://gateway.example.invalid/.well-known/oauth-protected-resource")
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 

@@ -18,6 +18,11 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
 )
 
+// protectedResourceMetadataPath is shared between the mux route and the
+// WWW-Authenticate resource_metadata URL below so the two can never drift
+// apart.
+const protectedResourceMetadataPath = "/.well-known/oauth-protected-resource"
+
 func main() {
 	cfg := gateway.LoadGatewayConfig()
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -53,9 +58,10 @@ func main() {
 		if err != nil {
 			log.Fatalf("gateway: azure ad metadata proxy: %v", err)
 		}
-		mux.Handle("/mcp", gateway.NewMCPHTTPHandlerWithVerifier(reg, verifier, cfg.OAuthRequiredScopes))
+		resourceMetadataURL := authServerIssuer + protectedResourceMetadataPath
+		mux.Handle("/mcp", gateway.NewMCPHTTPHandlerWithVerifier(reg, verifier, cfg.OAuthRequiredScopes, resourceMetadataURL))
 		mux.Handle("/.well-known/oauth-authorization-server", metadataHandler)
-		mux.Handle("/.well-known/oauth-protected-resource", auth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
+		mux.Handle(protectedResourceMetadataPath, auth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
 			Resource:             cfg.PublicMCPURL,
 			AuthorizationServers: []string{authServerIssuer},
 			ScopesSupported:      []string{cfg.OAuthAudience},
