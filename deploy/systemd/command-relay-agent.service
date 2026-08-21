@@ -1,0 +1,30 @@
+# Enforces base spec §9's Agent kill boundary at the cgroup level:
+# KillMode=control-group (systemd's default, spelled out here so it
+# survives an override elsewhere) sends the stop signal to every
+# process in this unit's cgroup, not just the Agent's own PID — so
+# `systemctl stop`/kill still takes down every process tree the Agent
+# started even if the Agent is SIGKILLed and never runs its own
+# graceful-shutdown code path (agent/cmd/main.go's TerminateAll).
+[Unit]
+Description=Remote Commander Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/command-relay-agent
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=30
+
+Environment=DEVICE_ID=
+Environment=DEVICE_SECRET=
+Environment=GATEWAY_URL=
+Environment=HISTORY_DB_PATH=/var/lib/command-relay-agent/history.db
+
+DynamicUser=yes
+StateDirectory=command-relay-agent
+
+[Install]
+WantedBy=multi-user.target
