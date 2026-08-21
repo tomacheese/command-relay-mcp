@@ -198,8 +198,9 @@ func TestAzureDefaultScope(t *testing.T) {
 		audience string
 		want     string
 	}{
-		{"1df6537b-d0ad-48f3-b9e6-98b9940b52a5", "api://1df6537b-d0ad-48f3-b9e6-98b9940b52a5/.default"},
-		{"api://1df6537b-d0ad-48f3-b9e6-98b9940b52a5", "api://1df6537b-d0ad-48f3-b9e6-98b9940b52a5/.default"},
+		{"1df6537b-d0ad-48f3-b9e6-98b9940b52a5", "1df6537b-d0ad-48f3-b9e6-98b9940b52a5/.default"},
+		{"api://1df6537b-d0ad-48f3-b9e6-98b9940b52a5", "1df6537b-d0ad-48f3-b9e6-98b9940b52a5/.default"},
+		{"api://1df6537b-d0ad-48f3-b9e6-98b9940b52a5/mcp.access", "1df6537b-d0ad-48f3-b9e6-98b9940b52a5/.default"},
 	}
 	for _, tt := range tests {
 		if got := AzureDefaultScope(tt.audience); got != tt.want {
