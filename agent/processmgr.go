@@ -120,22 +120,31 @@ func (m *Manager) Start(opts backend.StartOptions) (*ProcessRecord, error) {
 		done:      make(chan struct{}),
 	}
 
+	var copyWG sync.WaitGroup
+	copyWG.Add(2)
 	go func() {
-		// os.ErrClosed is the expected race between this copy and the
-		// exit-wait goroutine below: os/exec closes the pipe once Wait
-		// observes the process has exited, which can happen while this
-		// copy is still in flight. Anything else is a genuine failure.
+		defer copyWG.Done()
+		// os.ErrClosed is expected: the exit-wait goroutine below
+		// force-closes this pipe via Wait once the process exits, even
+		// if a descendant still holds the pipe's write end open.
 		if _, err := io.Copy(rec.Stdout, h.Stdout()); err != nil && !errors.Is(err, os.ErrClosed) {
 			log.Printf("agent: stdout copy for process %s (pid %d) failed: %v", rec.ID, rec.OSPID, err)
 		}
 	}()
 	go func() {
+		defer copyWG.Done()
 		if _, err := io.Copy(rec.Stderr, h.Stderr()); err != nil && !errors.Is(err, os.ErrClosed) {
 			log.Printf("agent: stderr copy for process %s (pid %d) failed: %v", rec.ID, rec.OSPID, err)
 		}
 	}()
 	go func() {
+		// Wait first: it force-closes the pipes above, unblocking their
+		// copies even if a descendant still holds a write end open.
+		// Waiting on copyWG before this would risk a permanent deadlock.
 		res := h.Wait()
+		// Only now are the copies above guaranteed to finish — block on
+		// them so exitCode/done never precede full Stdout/Stderr capture.
+		copyWG.Wait()
 		rec.mu.Lock()
 		if res.Err == nil {
 			ec := res.ExitCode
