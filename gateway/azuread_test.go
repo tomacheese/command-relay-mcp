@@ -193,6 +193,21 @@ func TestBuildAzureADAuthServerMetadataBody_AddsPKCESupportAndSelfIssuer(t *test
 	}
 }
 
+func TestAzureDefaultScope(t *testing.T) {
+	tests := []struct {
+		audience string
+		want     string
+	}{
+		{"1df6537b-d0ad-48f3-b9e6-98b9940b52a5", "api://1df6537b-d0ad-48f3-b9e6-98b9940b52a5/.default"},
+		{"api://1df6537b-d0ad-48f3-b9e6-98b9940b52a5", "api://1df6537b-d0ad-48f3-b9e6-98b9940b52a5/.default"},
+	}
+	for _, tt := range tests {
+		if got := AzureDefaultScope(tt.audience); got != tt.want {
+			t.Errorf("AzureDefaultScope(%q) = %q, want %q", tt.audience, got, tt.want)
+		}
+	}
+}
+
 // TestAzureADVerifier_LogsAuthenticationFailure covers the Gateway's
 // "authentication failure" logging for the Azure AD verifier path —
 // the fixed-bearer-token verifier already logs this (gateway/bearer.go);
