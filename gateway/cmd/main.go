@@ -61,10 +61,22 @@ func main() {
 		resourceMetadataURL := authServerIssuer + protectedResourceMetadataPath
 		mux.Handle("/mcp", gateway.NewMCPHTTPHandlerWithVerifier(reg, verifier, cfg.OAuthRequiredScopes, resourceMetadataURL))
 		mux.Handle("/.well-known/oauth-authorization-server", metadataHandler)
+		// scopesSupported must be a scope string Azure AD actually accepts
+		// at its /authorize and /token endpoints, not the bare audience
+		// (appId) — a client that requests the audience itself as a scope
+		// gets rejected by Azure, which breaks the flow right after the
+		// user authenticates (the audience is a valid "aud" claim value,
+		// but never a valid "scope" value). "<Application ID URI>/.default"
+		// is Azure's standard scope for requesting all statically
+		// configured permissions of the resource without needing the
+		// specific permission name; it matches the default
+		// "api://<appId>" Application ID URI Azure assigns unless the
+		// operator has customized it.
+		scopesSupported := "api://" + cfg.OAuthAudience + "/.default"
 		mux.Handle(protectedResourceMetadataPath, auth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
 			Resource:             cfg.PublicMCPURL,
 			AuthorizationServers: []string{authServerIssuer},
-			ScopesSupported:      []string{cfg.OAuthAudience},
+			ScopesSupported:      []string{scopesSupported},
 		}))
 		log.Print("gateway: MCP endpoint protected by Azure AD OAuth")
 	} else {
