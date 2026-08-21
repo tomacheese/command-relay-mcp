@@ -100,9 +100,13 @@ func NewAzureADAuthServerMetadataHandler(ctx context.Context, tenantID, selfIssu
 // literal metadata map, without any network call or live Azure tenant —
 // mirroring how newAzureADTokenVerifier is split out for the same reason.
 func buildAzureADAuthServerMetadataBody(azureMetadata map[string]any, selfIssuer string) ([]byte, error) {
-	azureMetadata["issuer"] = selfIssuer
-	azureMetadata["code_challenge_methods_supported"] = []string{"S256"}
-	body, err := json.Marshal(azureMetadata)
+	merged := make(map[string]any, len(azureMetadata)+2)
+	for k, v := range azureMetadata {
+		merged[k] = v
+	}
+	merged["issuer"] = selfIssuer
+	merged["code_challenge_methods_supported"] = []string{"S256"}
+	body, err := json.Marshal(merged)
 	if err != nil {
 		return nil, fmt.Errorf("azure ad discovery: encoding proxied metadata: %w", err)
 	}

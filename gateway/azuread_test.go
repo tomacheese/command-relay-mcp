@@ -161,11 +161,7 @@ func TestAzureADVerifier_RejectsBadSignature(t *testing.T) {
 }
 
 // TestBuildAzureADAuthServerMetadataBody_AddsPKCESupportAndSelfIssuer
-// covers the fix for ChatGPT's apps_sdk validator rejecting Azure AD:
-// Azure's real discovery document never advertises
-// "code_challenge_methods_supported" even though it accepts PKCE/S256 at
-// runtime, so the proxy must add it — and its "issuer" must become
-// selfIssuer, per RFC 8414 §3, rather than Azure's own issuer.
+// covers the rationale documented on NewAzureADAuthServerMetadataHandler.
 func TestBuildAzureADAuthServerMetadataBody_AddsPKCESupportAndSelfIssuer(t *testing.T) {
 	azureMetadata := map[string]any{
 		"issuer":                 testIssuer,
