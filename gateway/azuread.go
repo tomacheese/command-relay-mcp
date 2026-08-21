@@ -113,14 +113,10 @@ func buildAzureADAuthServerMetadataBody(azureMetadata map[string]any, selfIssuer
 	return body, nil
 }
 
-// AzureDefaultScope builds the "<appId>/.default" scope for the given
-// audience. This project's Gateway app registration is self-referencing
-// (the same Azure AD app is both the protected resource and the OAuth
-// client), and Azure AD rejects an "api://..." Application ID URI scope in
-// that scenario with AADSTS90009 ("requesting a token for itself...is
-// supported only if resource is specified using the GUID based App
-// Identifier") — so audience is normalized down to the bare appId GUID
-// here regardless of whether it was given with an "api://" prefix.
+// This project's Gateway app registration is self-referencing (one Azure
+// AD app is both the protected resource and the OAuth client), a scenario
+// where Azure AD (AADSTS90009) requires the bare appId GUID as the scope
+// and rejects the "api://..." Application ID URI form.
 func AzureDefaultScope(audience string) string {
 	guid := strings.TrimPrefix(audience, "api://")
 	if i := strings.IndexByte(guid, '/'); i != -1 {
