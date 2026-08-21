@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"os/signal"
 	"syscall"
 
@@ -40,10 +41,23 @@ func main() {
 		if err != nil {
 			log.Fatalf("gateway: azure ad discovery: %v", err)
 		}
+		publicMCPURL, err := url.Parse(cfg.PublicMCPURL)
+		if err != nil {
+			log.Fatalf("gateway: invalid PUBLIC_MCP_URL: %v", err)
+		}
+		// authServerIssuer is this Gateway's own origin, not Azure's: the
+		// /.well-known/oauth-authorization-server handler below proxies
+		// Azure's real metadata from here (see NewAzureADAuthServerMetadataHandler).
+		authServerIssuer := publicMCPURL.Scheme + "://" + publicMCPURL.Host
+		metadataHandler, err := gateway.NewAzureADAuthServerMetadataHandler(ctx, cfg.OAuthTenantID, authServerIssuer)
+		if err != nil {
+			log.Fatalf("gateway: azure ad metadata proxy: %v", err)
+		}
 		mux.Handle("/mcp", gateway.NewMCPHTTPHandlerWithVerifier(reg, verifier, cfg.OAuthRequiredScopes))
+		mux.Handle("/.well-known/oauth-authorization-server", metadataHandler)
 		mux.Handle("/.well-known/oauth-protected-resource", auth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
 			Resource:             cfg.PublicMCPURL,
-			AuthorizationServers: []string{"https://login.microsoftonline.com/" + cfg.OAuthTenantID + "/v2.0"},
+			AuthorizationServers: []string{authServerIssuer},
 			ScopesSupported:      []string{cfg.OAuthAudience},
 		}))
 		log.Print("gateway: MCP endpoint protected by Azure AD OAuth")
