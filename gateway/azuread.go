@@ -113,6 +113,20 @@ func buildAzureADAuthServerMetadataBody(azureMetadata map[string]any, selfIssuer
 	return body, nil
 }
 
+// AzureDefaultScope builds the "<Application ID URI>/.default" scope for
+// the given audience. audience may already be an Application ID URI
+// (api://<appId>) rather than a bare appId — Azure AD access tokens can
+// carry either shape in "aud" depending on the app registration — so the
+// prefix is added only when not already present, to avoid a doubled
+// "api://api://..." scope that Azure would reject.
+func AzureDefaultScope(audience string) string {
+	uri := audience
+	if !strings.HasPrefix(uri, "api://") {
+		uri = "api://" + uri
+	}
+	return uri + "/.default"
+}
+
 // logAzureADAuthFailure mirrors NewFixedBearerVerifier's own log line —
 // req may be nil in tests that verify the token in isolation, and
 // RemoteAddr (never the token itself) is the only detail logged either
