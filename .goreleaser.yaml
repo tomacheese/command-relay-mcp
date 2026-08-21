@@ -1,0 +1,46 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
+version: 2
+
+project_name: command-relay-agent
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  # Only the Agent is released as a standalone binary (base spec §9's
+  # systemd deployment). The Gateway is Docker-only (see release.yml) and
+  # only the Agent uses the Linux-only Landlock/namespace backend
+  # (internal/backend/*_linux.go — addendum's explicit non-goal: no
+  # Windows Agent), so this never targets darwin/windows.
+  - id: agent
+    main: ./agent/cmd
+    binary: command-relay-agent
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X command-relay-mcp/internal/version.Version={{.Version}}
+
+archives:
+  - format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"

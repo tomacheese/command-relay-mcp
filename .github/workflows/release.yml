@@ -1,0 +1,163 @@
+# Gateway の Docker image (ghcr.io) と Agent バイナリ (GitHub Release) を
+# 同一バージョンタグで同時にリリースする。
+#
+# バージョンタグは docker-ci-gateway ジョブ (reusable-docker.yml 内の
+# calc-version) が一度だけ発行し、agent-release はそのタグをそのまま
+# 再利用する。Gateway と Agent を別ワークフローで独立にタグ付けすると、
+# 同じマージで2つの github-tag-action が並行実行され、同じタグ名を
+# 取り合って競合したり、Gateway と Agent のバージョンがズレたりする。
+
+name: Release
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+    types:
+      - opened
+      - synchronize
+    paths:
+      - .github/workflows/release.yml
+  pull_request_target:
+    branches:
+      - main
+      - master
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - closed
+  merge_group:
+
+concurrency:
+  # pull_request と pull_request_target が同一グループになると互いをキャンセルしてしまうため
+  # event_name を含めることで両イベントのキャンセルを独立させる
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  packages: write
+  deployments: write
+  actions: read
+
+jobs:
+  post-approval-request:
+    name: Post approval request
+    runs-on: ubuntu-latest
+    # フォーク PR のときのみ承認リクエストを投稿する（closed は不要）
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository && github.event.action != 'closed'
+    continue-on-error: true
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Find existing approval request comment
+        id: find-comment
+        uses: peter-evans/find-comment@b30e6a3c0ed37e7c023ccd3f1db5c6c0b0c23aad # v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: Environment 承認待ち
+
+      - name: Post or update approval request comment
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body: |
+            ## Environment 承認待ち
+
+            この PR のビルドを実行するには、Environment `fork-pr-build` の承認が必要です。
+
+            [Actions run を確認して承認してください](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}?pr=${{ github.event.pull_request.number }})
+
+  approval-gate:
+    name: Approval gate
+    runs-on: ubuntu-latest
+    needs: post-approval-request
+    # post-approval-request の結果に関わらず常に実行する
+    if: always()
+    # フォーク PR かつ closed でない場合のみ Environment で手動承認が必要
+    environment: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository && github.event.action != 'closed' && 'fork-pr-build' || '' }}
+    permissions: {}
+    steps:
+      - name: Approval granted
+        run: echo "Approval gate passed"
+
+  docker-ci-gateway:
+    name: Docker CI (gateway)
+    needs: approval-gate
+    if: always() && needs.approval-gate.result == 'success' && (github.event.action != 'closed' || github.event.pull_request.merged == true)
+    uses: book000/templates/.github/workflows/reusable-docker.yml@master
+    with:
+      targets: >-
+        [
+          { imageName: "tomacheese/command-relay-mcp", context: ".", file: "Dockerfile", packageName: "command-relay-mcp" }
+        ]
+      # registry: registry.hub.docker.com # default: ghcr.io
+      allow-unsafe-pr-checkout: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository }}
+    secrets:
+      DOCKER_USERNAME: ${{ github.actor }}
+      DOCKER_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+
+  agent-release:
+    name: Release Agent binary
+    needs: docker-ci-gateway
+    # docker-ci-gateway が全ステップ(タグ発行含む)を完了してから開始する。
+    # tag 出力は dry-run（未マージ）でも計算されるので、GoReleaser 側の
+    # snapshot 判定 (below) と合わせて常に needs.docker-ci-gateway.outputs.tag
+    # を参照できる。
+    if: always() && needs.docker-ci-gateway.result == 'success' && (github.event.action != 'closed' || github.event.pull_request.merged == true)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.merged == true && github.base_ref || github.event.pull_request.head.sha || github.sha }}
+
+      - name: Fetch tags
+        # docker-ci-gateway がこのコミットに対して既にタグを push している
+        # （マージ時のみ）。Agent はここでタグを"消費"するだけで、
+        # 自分では一切タグを発行しない。
+        run: git fetch --tags
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: "go.mod"
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Test
+        run: go test -v ./...
+
+      - name: GoReleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          # マージ済みの時だけ実タグでリリースする。それ以外（PRプレビュー・
+          # merge_group）は docker-ci-gateway が dry-run で計算した tag は
+          # 実際には push されていないため、snapshot ビルドに留める。
+          # GoReleaser の release.mode の既定値は keep-existing なので、
+          # docker-ci-gateway が同じタグで既に作成した GitHub Release の
+          # 本文はそのまま残り、Agent の配布アーカイブだけが追加される。
+          args: release --clean ${{ github.event.pull_request.merged != true && '--skip=validate,publish --snapshot' || '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist
+
+      - name: Check formatting
+        run: |
+          go fmt ./...
+          git diff --exit-code
