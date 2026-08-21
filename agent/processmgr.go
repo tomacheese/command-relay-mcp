@@ -120,21 +120,28 @@ func (m *Manager) Start(opts backend.StartOptions) (*ProcessRecord, error) {
 		done:      make(chan struct{}),
 	}
 
+	var copyWG sync.WaitGroup
+	copyWG.Add(2)
 	go func() {
-		// os.ErrClosed is the expected race between this copy and the
-		// exit-wait goroutine below: os/exec closes the pipe once Wait
-		// observes the process has exited, which can happen while this
-		// copy is still in flight. Anything else is a genuine failure.
+		defer copyWG.Done()
 		if _, err := io.Copy(rec.Stdout, h.Stdout()); err != nil && !errors.Is(err, os.ErrClosed) {
 			log.Printf("agent: stdout copy for process %s (pid %d) failed: %v", rec.ID, rec.OSPID, err)
 		}
 	}()
 	go func() {
+		defer copyWG.Done()
 		if _, err := io.Copy(rec.Stderr, h.Stderr()); err != nil && !errors.Is(err, os.ErrClosed) {
 			log.Printf("agent: stderr copy for process %s (pid %d) failed: %v", rec.ID, rec.OSPID, err)
 		}
 	}()
 	go func() {
+		// exec.Cmd.StdoutPipe/StderrPipe document that Wait closes the
+		// pipe once it observes the process exit, and that calling Wait
+		// before all reads have completed is incorrect — it can truncate
+		// output the copy goroutines above haven't read yet. Waiting for
+		// them to drain first guarantees Stdout/Stderr hold everything
+		// the process wrote before exitCode/done are ever observed.
+		copyWG.Wait()
 		res := h.Wait()
 		rec.mu.Lock()
 		if res.Err == nil {
