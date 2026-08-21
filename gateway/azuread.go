@@ -113,18 +113,20 @@ func buildAzureADAuthServerMetadataBody(azureMetadata map[string]any, selfIssuer
 	return body, nil
 }
 
-// AzureDefaultScope builds the "<Application ID URI>/.default" scope for
-// the given audience. audience may already be an Application ID URI
-// (api://<appId>) rather than a bare appId — Azure AD access tokens can
-// carry either shape in "aud" depending on the app registration — so the
-// prefix is added only when not already present, to avoid a doubled
-// "api://api://..." scope that Azure would reject.
+// AzureDefaultScope builds the "<appId>/.default" scope for the given
+// audience. This project's Gateway app registration is self-referencing
+// (the same Azure AD app is both the protected resource and the OAuth
+// client), and Azure AD rejects an "api://..." Application ID URI scope in
+// that scenario with AADSTS90009 ("requesting a token for itself...is
+// supported only if resource is specified using the GUID based App
+// Identifier") — so audience is normalized down to the bare appId GUID
+// here regardless of whether it was given with an "api://" prefix.
 func AzureDefaultScope(audience string) string {
-	uri := audience
-	if !strings.HasPrefix(uri, "api://") {
-		uri = "api://" + uri
+	guid := strings.TrimPrefix(audience, "api://")
+	if i := strings.IndexByte(guid, '/'); i != -1 {
+		guid = guid[:i]
 	}
-	return uri + "/.default"
+	return guid + "/.default"
 }
 
 // logAzureADAuthFailure mirrors NewFixedBearerVerifier's own log line —

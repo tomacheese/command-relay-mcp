@@ -61,9 +61,6 @@ func main() {
 		resourceMetadataURL := authServerIssuer + protectedResourceMetadataPath
 		mux.Handle("/mcp", gateway.NewMCPHTTPHandlerWithVerifier(reg, verifier, cfg.OAuthRequiredScopes, resourceMetadataURL))
 		mux.Handle("/.well-known/oauth-authorization-server", metadataHandler)
-		// The bare audience is a valid "aud" claim but not a valid Azure AD
-		// scope, so it must be wrapped as an Application ID URI's ".default"
-		// scope here instead of advertised as-is.
 		scopesSupported := gateway.AzureDefaultScope(cfg.OAuthAudience)
 		mux.Handle(protectedResourceMetadataPath, auth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
 			Resource:             cfg.PublicMCPURL,
