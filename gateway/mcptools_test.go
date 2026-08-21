@@ -122,7 +122,7 @@ func TestNewMCPHTTPHandlerWithVerifier_UsesGivenVerifier(t *testing.T) {
 		}
 		return &auth.TokenInfo{Expiration: time.Now().Add(time.Hour)}, nil
 	}
-	handler := NewMCPHTTPHandlerWithVerifier(reg, verifier)
+	handler := NewMCPHTTPHandlerWithVerifier(reg, verifier, nil)
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
@@ -136,6 +136,25 @@ func TestNewMCPHTTPHandlerWithVerifier_UsesGivenVerifier(t *testing.T) {
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		t.Fatalf("status = %d, custom verifier should have accepted the token", resp.StatusCode)
+	}
+}
+
+func TestNewMCPHTTPHandlerWithVerifier_EnforcesRequiredScopes(t *testing.T) {
+	reg := NewRegistry()
+	verifier := func(ctx context.Context, presented string, req *http.Request) (*auth.TokenInfo, error) {
+		return &auth.TokenInfo{Expiration: time.Now().Add(time.Hour), Scopes: []string{"read"}}, nil
+	}
+	handler := NewMCPHTTPHandlerWithVerifier(reg, verifier, []string{"admin"})
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	resp, err := bearerClient("any-token").Post(srv.URL, "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d for a token missing a required scope", resp.StatusCode, http.StatusForbidden)
 	}
 }
 

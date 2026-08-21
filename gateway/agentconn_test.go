@@ -43,12 +43,11 @@ func dialRegisteredDevice(t *testing.T, srv *httptest.Server, reg *Registry, dev
 	return nil
 }
 
-// TestAgentConn_CallOnCtxTimeoutReturnsTimeoutCode covers base spec
-// §18.1/§18.3: a request/response round trip that doesn't complete
-// before its context deadline is a "transport timeout", distinct from
-// a command/process wait timeout — it must surface proto.ErrTimeout, not
-// a bare context error the caller can't map to any of the 10 required
-// error codes.
+// TestAgentConn_CallOnCtxTimeoutReturnsTimeoutCode covers that a
+// request/response round trip that doesn't complete before its context
+// deadline is a "transport timeout", distinct from a command/process
+// wait timeout — it must surface proto.ErrTimeout, not a bare context
+// error the caller can't map to any of the required error codes.
 func TestAgentConn_CallOnCtxTimeoutReturnsTimeoutCode(t *testing.T) {
 	reg := NewRegistry()
 	verify := func(deviceID, secret string) bool { return secret == "s3cr3t" }
@@ -63,14 +62,15 @@ func TestAgentConn_CallOnCtxTimeoutReturnsTimeoutCode(t *testing.T) {
 	defer cancel()
 	// The Agent never responds, so the deadline fires first.
 	_, err := conn.Call(ctx, proto.MethodDevicePing, struct{}{})
-	if err == nil || err.Error() != proto.ErrTimeout {
-		t.Fatalf("Call error = %v, want %q", err, proto.ErrTimeout)
+	rpcErr, ok := err.(*proto.RPCError)
+	if !ok || rpcErr.Code != proto.ErrTimeout {
+		t.Fatalf("Call error = %v, want code %q", err, proto.ErrTimeout)
 	}
 }
 
-// TestAgentConn_ConcurrentCallsDoNotCorruptTransport covers base spec
-// §5.1/§16.1: multiple RPCs to the same device must be multiplexable on
-// one connection, which requires every concurrent Call to serialize its
+// TestAgentConn_ConcurrentCallsDoNotCorruptTransport covers that
+// multiple RPCs to the same device must be multiplexable on one
+// connection, which requires every concurrent Call to serialize its
 // own ws.Write — coder/websocket requires callers to serialize concurrent
 // writers themselves (see agent/connection.go's symmetric writeMu on the
 // Agent side of the same connection).
@@ -126,10 +126,10 @@ func TestAgentConn_ConcurrentCallsDoNotCorruptTransport(t *testing.T) {
 	<-done
 }
 
-// TestAgentConn_CallOnTransportLoss covers base spec §17: a transport
-// loss while a mutating request is in flight must surface as
-// execution_unknown (the Gateway cannot tell whether the Agent applied
-// it), while a non-mutating request surfaces the plain transport_lost.
+// TestAgentConn_CallOnTransportLoss covers that a transport loss while
+// a mutating request is in flight must surface as execution_unknown
+// (the Gateway cannot tell whether the Agent applied it), while a
+// non-mutating request surfaces the plain transport_lost.
 func TestAgentConn_CallOnTransportLoss(t *testing.T) {
 	cases := []struct {
 		method   string
@@ -171,15 +171,16 @@ func TestAgentConn_CallOnTransportLoss(t *testing.T) {
 
 			select {
 			case err := <-errCh:
-				if err == nil || err.Error() != tc.wantCode {
-					t.Fatalf("Call error = %v, want %q", err, tc.wantCode)
+				rpcErr, ok := err.(*proto.RPCError)
+				if !ok || rpcErr.Code != tc.wantCode {
+					t.Fatalf("Call error = %v, want code %q", err, tc.wantCode)
 				}
 			case <-time.After(3 * time.Second):
 				t.Fatal("Call did not return after transport loss")
 			}
 
-			// base spec §24: this must be logged as a distinct "transport
-			// failure" category, not just silently mapped to an error code.
+			// This must be logged as a distinct "transport failure" category,
+			// not just silently mapped to an error code.
 			if !strings.Contains(logBuf.String(), "transport failure") {
 				t.Fatalf("log output = %q, want it to mention \"transport failure\"", logBuf.String())
 			}

@@ -115,30 +115,30 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: 📥 Check out the repo
+      - name: Check out the repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.merged == true && github.base_ref || github.event.pull_request.head.sha || github.sha }}
 
-      - name: 🏷️ Fetch tags
+      - name: Fetch tags
         # docker-ci-gateway がこのコミットに対して既にタグを push している
         # （マージ時のみ）。Agent はここでタグを"消費"するだけで、
         # 自分では一切タグを発行しない。
         run: git fetch --tags
 
-      - name: 🛠️ Set up Go
+      - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: "go.mod"
 
-      - name: 📦 Install dependencies
+      - name: Install dependencies
         run: go mod download
 
-      - name: 🧪 Test
+      - name: Test
         run: go test -v ./...
 
-      - name: 🚀 GoReleaser
+      - name: GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           # マージ済みの時だけ実タグでリリースする。それ以外（PRプレビュー・
@@ -151,13 +151,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 📦 Upload artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist
           path: dist
 
-      - name: 🧹 Check formatting
+      - name: Check formatting
         run: |
           go fmt ./...
           git diff --exit-code

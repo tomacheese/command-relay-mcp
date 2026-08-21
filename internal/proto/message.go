@@ -2,14 +2,14 @@ package proto
 
 import "encoding/json"
 
-// Message types (base spec §16.2).
+// Message types identify the kind of JSON payload sent over the wire.
 const (
 	TypeHello    = "hello"
 	TypeRequest  = "request"
 	TypeResponse = "response"
 )
 
-// Method names (base spec §16.3 example: "process.read").
+// Method names identify the RPC being invoked, e.g. "process.read".
 const (
 	MethodDevicePing       = "device.ping"
 	MethodCommandExec      = "command.exec"
@@ -31,10 +31,10 @@ const (
 	MethodDirectoryCreate  = "directory.create"
 )
 
-// mutatingMethods are the methods that change Agent-side state. Base
-// spec §17: if the transport is lost while one of these is in flight,
-// the Gateway cannot tell whether the Agent applied it, so the caller
-// must see execution_unknown rather than a plain transport_lost.
+// mutatingMethods are the methods that change Agent-side state. If the
+// transport is lost while one of these is in flight, the Gateway cannot
+// tell whether the Agent applied it, so the caller must see
+// execution_unknown rather than a plain transport_lost.
 var mutatingMethods = map[string]bool{
 	MethodCommandExec:      true,
 	MethodProcessStart:     true,
@@ -48,7 +48,7 @@ var mutatingMethods = map[string]bool{
 
 func IsMutatingMethod(method string) bool { return mutatingMethods[method] }
 
-// Protocol-level error codes (base spec §18.1).
+// Protocol-level error codes returned in RPCError.Code.
 const (
 	ErrDeviceOffline    = "device_offline"
 	ErrUnsupported      = "unsupported"
@@ -62,8 +62,7 @@ const (
 	ErrInternal         = "internal_error"
 )
 
-// Capabilities mirrors the "capabilities" object of the hello message
-// (base spec §5.2).
+// Capabilities mirrors the "capabilities" object of the hello message.
 type Capabilities struct {
 	CommandRead bool `json:"command_read"`
 	CommandExec bool `json:"command_exec"`
@@ -71,8 +70,7 @@ type Capabilities struct {
 	Filesystem  bool `json:"filesystem"`
 }
 
-// Hello is the first message an Agent sends after connecting
-// (base spec §5.2).
+// Hello is the first message an Agent sends after connecting.
 type Hello struct {
 	Type         string       `json:"type"`
 	DeviceID     string       `json:"device_id"`
@@ -84,7 +82,7 @@ type Hello struct {
 }
 
 // Request is a single RPC call multiplexed on the Agent<->Gateway
-// WebSocket connection (base spec §16.3).
+// WebSocket connection.
 type Request struct {
 	Type      string          `json:"type"`
 	RequestID string          `json:"request_id"`
@@ -102,7 +100,7 @@ func NewRequest(method string, params any) (*Request, error) {
 	return &Request{Type: TypeRequest, Method: method, Params: raw}, nil
 }
 
-// RPCError is the "error" field of a failed Response (base spec §16.4).
+// RPCError is the "error" field of a failed Response.
 // It implements the error interface so Gateway-side callers can return
 // it directly.
 type RPCError struct {
@@ -112,8 +110,7 @@ type RPCError struct {
 
 func (e *RPCError) Error() string { return e.Code + ": " + e.Message }
 
-// Response is the reply to a Request, correlated by RequestID
-// (base spec §16.4, §16.5).
+// Response is the reply to a Request, correlated by RequestID.
 type Response struct {
 	Type      string          `json:"type"`
 	RequestID string          `json:"request_id"`

@@ -9,18 +9,17 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// ExecutionStart is the row written when a command/process begins,
-// following base spec §12.2's schema (minus stdout/stderr/stdin,
-// which are never persisted per §12.3).
+// ExecutionStart is the row written when a command/process begins
+// (minus stdout/stderr/stdin, which are never persisted).
 type ExecutionStart struct {
 	ExecutionID     string
 	ProcessID       string
 	DeviceID        string
-	Mode            string // "read" | "write" | "process" (base spec §12.2)
+	Mode            string // "read" | "write" | "process"
 	Command         string
 	Cwd             string
 	StartedAt       time.Time
-	ClientContextID string // best-effort; empty means NULL (base spec §13)
+	ClientContextID string // best-effort; empty means NULL
 	ClientSubject   string
 }
 
@@ -62,9 +61,25 @@ type HistoryStore struct {
 	db *sql.DB
 }
 
+// historyTimeLayout formats timestamps with a fixed-width, always-present
+// 9-digit fractional second, unlike time.RFC3339Nano (which omits the
+// fraction entirely when it is zero). List/PurgeOlderThan compare these
+// strings lexicographically, which only matches chronological order
+// when every value has the same width; time.Parse(time.RFC3339Nano, ...)
+// still reads this format back correctly.
+const historyTimeLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
 func OpenHistoryStore(path string) (*HistoryStore, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec("PRAGMA journal_mode=WAL;"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec("PRAGMA busy_timeout=5000;"); err != nil {
+		db.Close()
 		return nil, err
 	}
 	if _, err := db.Exec(schema); err != nil {
@@ -82,7 +97,7 @@ func (s *HistoryStore) RecordStart(e ExecutionStart) error {
 		 (execution_id, process_id, device_id, mode, command, cwd, started_at, client_context_id, client_subject)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ExecutionID, e.ProcessID, e.DeviceID, e.Mode, e.Command, e.Cwd,
-		e.StartedAt.UTC().Format(time.RFC3339Nano),
+		e.StartedAt.UTC().Format(historyTimeLayout),
 		nullIfEmpty(e.ClientContextID), nullIfEmpty(e.ClientSubject),
 	)
 	return err
@@ -91,7 +106,7 @@ func (s *HistoryStore) RecordStart(e ExecutionStart) error {
 func (s *HistoryStore) RecordEnd(executionID string, endedAt time.Time, exitCode *int) error {
 	_, err := s.db.Exec(
 		`UPDATE executions SET ended_at = ?, exit_code = ? WHERE execution_id = ?`,
-		endedAt.UTC().Format(time.RFC3339Nano), exitCode, executionID,
+		endedAt.UTC().Format(historyTimeLayout), exitCode, executionID,
 	)
 	return err
 }
@@ -159,15 +174,14 @@ func scanExecution(row scanner) (*Execution, error) {
 	return &e, nil
 }
 
-// PurgeOlderThan deletes executions that started before cutoff (base
-// spec §23's history_retention setting).
+// PurgeOlderThan deletes executions that started before cutoff.
 func (s *HistoryStore) PurgeOlderThan(cutoff time.Time) error {
-	_, err := s.db.Exec(`DELETE FROM executions WHERE started_at < ?`, cutoff.UTC().Format(time.RFC3339Nano))
+	_, err := s.db.Exec(`DELETE FROM executions WHERE started_at < ?`, cutoff.UTC().Format(historyTimeLayout))
 	return err
 }
 
-// StartGC periodically purges executions older than retention (base spec
-// §23's history_retention). Call once per Agent process.
+// StartGC periodically purges executions older than retention. Call
+// once per Agent process.
 func (s *HistoryStore) StartGC(ctx context.Context, retention, interval time.Duration) {
 	go func() {
 		t := time.NewTicker(interval)

@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// TestLoadConfig_AppliesSpecDefaults covers base spec §23's recommended
-// defaults (finished_process_ttl=1h, stdout/stderr_buffer_bytes=4MiB,
+// TestLoadConfig_AppliesSpecDefaults covers the documented defaults
+// (finished_process_ttl=1h, stdout/stderr_buffer_bytes=4MiB,
 // history_retention=30d) when the corresponding env vars are unset.
 func TestLoadConfig_AppliesSpecDefaults(t *testing.T) {
 	for _, key := range []string{"DEFAULT_SHELL", "FINISHED_PROCESS_TTL", "HISTORY_RETENTION", "STDOUT_BUFFER_BYTES", "STDERR_BUFFER_BYTES"} {
@@ -29,10 +29,9 @@ func TestLoadConfig_AppliesSpecDefaults(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_ReadsOverridesFromEnv covers base spec §23's requirement
-// that default_shell and finished_process_ttl (previously hardcoded Go
-// literals) are configurable, alongside history_retention which base
-// spec §23 lists but which had no config field at all before this fix.
+// TestLoadConfig_ReadsOverridesFromEnv covers that default_shell,
+// finished_process_ttl, and history_retention are all configurable via
+// environment variables.
 func TestLoadConfig_ReadsOverridesFromEnv(t *testing.T) {
 	t.Setenv("DEFAULT_SHELL", "/bin/sh -c")
 	t.Setenv("FINISHED_PROCESS_TTL", "2h")

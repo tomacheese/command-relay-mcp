@@ -75,10 +75,9 @@ func TestProcessLifecycle_StartReadWriteWaitTerminate(t *testing.T) {
 	}
 }
 
-// TestProcessStart_RecordsExecutionEndOnExit covers base spec §12: a
+// TestProcessStart_RecordsExecutionEndOnExit covers that a
 // process.start execution's history row must get its ended_at/exit_code
-// filled in once the process actually exits, not stay open forever like
-// its RecordStart-only predecessor.
+// filled in once the process actually exits, not stay open forever.
 func TestProcessStart_RecordsExecutionEndOnExit(t *testing.T) {
 	mgr := NewManager(backend.NewLinuxBackend([]string{"/bin/bash", "-lc"}), 4<<20, 4<<20, time.Hour)
 	hist, err := OpenHistoryStore(filepath.Join(t.TempDir(), "history.db"))
@@ -179,8 +178,8 @@ func (b erroringStdinBackend) Start(opts backend.StartOptions) (backend.ProcessH
 	return erroringStdinHandle{h}, nil
 }
 
-// TestProcessWrite_LogsProcessManagementFailure covers base spec §24's
-// "unexpected process-management failure" Agent logging category for
+// TestProcessWrite_LogsProcessManagementFailure covers the Agent's
+// "unexpected process-management failure" logging category for
 // process.write's stdin-write failure path.
 func TestProcessWrite_LogsProcessManagementFailure(t *testing.T) {
 	mgr := NewManager(erroringStdinBackend{backend.NewLinuxBackend([]string{"/bin/bash", "-lc"})}, 4<<20, 4<<20, time.Hour)
@@ -229,9 +228,9 @@ func (b erroringTerminateBackend) Start(opts backend.StartOptions) (backend.Proc
 	return erroringTerminateHandle{h}, nil
 }
 
-// TestProcessTerminate_RealFailureLogsAndReturnsInternal covers base spec
-// §18.1: a genuine termination failure must not be misclassified as
-// process_not_found, and must be logged under §24's "unexpected
+// TestProcessTerminate_RealFailureLogsAndReturnsInternal covers that a
+// genuine termination failure must not be misclassified as
+// process_not_found, and must be logged under the "unexpected
 // process-management failure" category.
 func TestProcessTerminate_RealFailureLogsAndReturnsInternal(t *testing.T) {
 	mgr := NewManager(erroringTerminateBackend{backend.NewLinuxBackend([]string{"/bin/bash", "-lc"})}, 4<<20, 4<<20, time.Hour)

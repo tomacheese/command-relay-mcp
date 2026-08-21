@@ -9,7 +9,7 @@ import (
 )
 
 type linuxBackend struct {
-	shell []string // e.g. []string{"/bin/bash", "-lc"} (base spec §7.1)
+	shell []string // e.g. []string{"/bin/bash", "-lc"}
 }
 
 // NewLinuxBackend returns a ProcessBackend that wraps every command with
@@ -39,7 +39,7 @@ func (l *linuxBackend) Start(opts StartOptions) (ProcessHandle, error) {
 		cmd.Env = env
 	}
 	// New process group so Terminate can signal the whole tree, not just
-	// the shell PID (base spec §8.8, §9.1).
+	// the shell PID.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	stdout, err := cmd.StdoutPipe()
@@ -73,8 +73,8 @@ func (h *linuxHandle) Wait() ExitResult {
 	if exitErr, ok := err.(*exec.ExitError); ok {
 		return ExitResult{ExitCode: exitErr.ExitCode()}
 	}
-	// Exit code unobservable (e.g. Agent killed, signal, etc.) — base
-	// spec §12.4 allows exit_code to stay unknown in that case.
+	// Exit code unobservable (e.g. Agent killed, signal, etc.) — the
+	// caller must allow exit_code to stay unknown in that case.
 	return ExitResult{Err: fmt.Errorf("wait: %w", err)}
 }
 

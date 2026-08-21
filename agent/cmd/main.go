@@ -18,8 +18,8 @@ import (
 )
 
 func main() {
-	// Hidden self-re-exec target for command.read's sandbox (base spec
-	// §15, addendum §4). This must be the ONLY code path in this binary
+	// Hidden self-re-exec target for command.read's sandbox. This must
+	// be the ONLY code path in this binary
 	// that ever calls the Landlock API: Landlock restrictions apply to
 	// the calling process for the rest of its life and cannot be
 	// lifted, so applying them here — in a short-lived child that
@@ -96,9 +96,9 @@ func main() {
 	log.Printf("agent: connecting to %s as device %q", cfg.GatewayURL, cfg.DeviceID)
 	runErr := conn.Run(ctx)
 
-	// Kill boundary (base spec §9): a graceful stop (SIGTERM/SIGINT)
-	// terminates every process tree this Agent started, not just the
-	// Agent itself. This covers graceful stops; systemd's default
+	// A graceful stop (SIGTERM/SIGINT) terminates every process tree
+	// this Agent started, not just the Agent itself. This covers
+	// graceful stops; systemd's default
 	// KillMode=control-group (see deploy/systemd/command-relay-agent.service)
 	// covers the SIGKILL/crash case this code can't catch.
 	log.Print("agent: shutting down, terminating managed process trees")
@@ -117,18 +117,17 @@ func main() {
 // scratch directory — then execs the real command, replacing this
 // process. It never returns on success; on any setup failure it exits
 // with backend.SandboxSetupFailedExitCode instead of falling through to
-// running the command unsandboxed (base spec §15.3/§27 criterion #12).
+// running the command unsandboxed.
 //
-// The exit code alone cannot signal "setup failed" to the parent: a
+// The exit code alone cannot signal "setup failed" to the parent. A
 // successful syscall.Exec fully replaces this process image with the
 // sandboxed command's, so the parent would otherwise be unable to tell
 // that command legitimately exiting 111 apart from this wrapper failing
-// setup (base spec §18.2 — a command's own non-zero exit is never a
-// protocol error). A status pipe, inherited on the reserved
-// backend.statusPipeFD, carries that signal out-of-band instead: marked
-// close-on-exec here, so a successful exec closes it automatically
-// (silence = success), while every failure path below writes to it
-// before exiting.
+// setup — a command's own non-zero exit is never a protocol error. A
+// status pipe, inherited on the reserved backend.statusPipeFD, carries
+// that signal out-of-band instead: marked close-on-exec here, so a
+// successful exec closes it automatically (silence = success), while
+// every failure path below writes to it before exiting.
 func landlockExecMain(execArgv []string) {
 	statusFD := os.NewFile(3, "sandbox-status")
 	syscall.CloseOnExec(3)
@@ -143,7 +142,7 @@ func landlockExecMain(execArgv []string) {
 	// The parent (backend.SandboxedBackend.Start) creates and later removes
 	// the scratch directory — this process's own image is gone by the time
 	// the command exits (syscall.Exec replaces it), so only the parent can
-	// clean it up (base spec §15.1's "writable, ephemeral" scratch area).
+	// clean it up (the scratch area is "writable, ephemeral").
 	scratchDir := os.Getenv("RC_SANDBOX_SCRATCH_DIR")
 	if scratchDir == "" {
 		fail()
@@ -152,9 +151,9 @@ func landlockExecMain(execArgv []string) {
 	os.Setenv("HOME", scratchDir)
 
 	// Strict mode only: BestEffort() would silently downgrade protection
-	// on partial kernel support, which base spec §15.3/§27 criterion #12
-	// forbids for the same reason it forbids falling back to
-	// command.exec. Network denial is already in place by this point —
+	// on partial kernel support, which is forbidden for the same reason
+	// falling back to command.exec is forbidden. Network denial is
+	// already in place by this point —
 	// SandboxedBackend joined a fresh network namespace at process
 	// creation — so RestrictPaths only needs to cover the filesystem.
 	if err := landlock.V4.RestrictPaths(landlock.RODirs("/"), landlock.RWDirs(scratchDir)); err != nil {

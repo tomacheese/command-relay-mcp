@@ -9,7 +9,7 @@ import (
 	"command-relay-mcp/internal/proto"
 )
 
-// ExecutionListParams is the payload of execution.list (base spec §19.5).
+// ExecutionListParams is the payload of execution.list.
 type ExecutionListParams struct {
 	Limit int `json:"limit,omitempty"`
 }
@@ -18,7 +18,7 @@ type ExecutionListResult struct {
 	Executions []Execution `json:"executions"`
 }
 
-// ExecutionGetParams is the payload of execution.get (base spec §19.5).
+// ExecutionGetParams is the payload of execution.get.
 type ExecutionGetParams struct {
 	ExecutionID string `json:"execution_id"`
 }
@@ -38,7 +38,7 @@ func NewExecutionHandlers(hist *HistoryStore) *ExecutionHandlers {
 }
 
 // List implements execution.list: history only, never live process
-// state (base spec §12.1).
+// state.
 func (h *ExecutionHandlers) List(ctx context.Context, raw json.RawMessage) (any, *proto.RPCError) {
 	var p ExecutionListParams
 	if err := json.Unmarshal(raw, &p); err != nil {

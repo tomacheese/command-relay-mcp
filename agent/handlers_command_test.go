@@ -67,9 +67,9 @@ func TestCommandExec_TimeoutDoesNotKillProcess(t *testing.T) {
 		t.Fatalf("exitCode=%v timedOut=%v", exitCode, timedOut)
 	}
 
-	// base spec §8.5/§12: the timed-out call returns before the process
-	// exits, but its history row must still eventually get its real,
-	// fully-observed outcome recorded — not sit at ended_at=NULL forever.
+	// The timed-out call returns before the process exits, but its
+	// history row must still eventually get its real, fully-observed
+	// outcome recorded — not sit at ended_at=NULL forever.
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		list, err := h.hist.List(10)
@@ -168,8 +168,8 @@ func TestCommandRead_DeniesWriteOutsideScratchAndRecordsHistory(t *testing.T) {
 	if res.ExitCode == nil || *res.ExitCode == 0 {
 		t.Fatalf("res = %+v, expected a non-zero exit from the denied write", res)
 	}
-	// base spec §18.2: the sandbox denying a mutation is still an RPC
-	// success, distinguished from an unrelated non-zero exit by this flag.
+	// The sandbox denying a mutation is still an RPC success,
+	// distinguished from an unrelated non-zero exit by this flag.
 	if !res.SandboxViolation {
 		t.Fatalf("res.SandboxViolation = false, want true for a denied write")
 	}
@@ -217,7 +217,7 @@ func (alwaysSandboxSetupFailedHandle) Terminate(graceMs int) error { return nil 
 
 // alwaysStartErrorBackend simulates the backend itself failing to spawn a
 // process at all (distinct from a sandbox setup failure inside an
-// otherwise-started process) — base spec §24's Agent "unexpected
+// otherwise-started process) — the Agent's "unexpected
 // process-management failure" logging category.
 type alwaysStartErrorBackend struct{}
 
@@ -225,8 +225,8 @@ func (alwaysStartErrorBackend) Start(backend.StartOptions) (backend.ProcessHandl
 	return nil, errors.New("fork/exec failed")
 }
 
-// TestCommandExec_LogsProcessManagementFailure covers base spec §24's
-// "unexpected process-management failure" Agent logging category for
+// TestCommandExec_LogsProcessManagementFailure covers the Agent's
+// "unexpected process-management failure" logging category for
 // command.exec's backend-start failure path.
 func TestCommandExec_LogsProcessManagementFailure(t *testing.T) {
 	hist, err := OpenHistoryStore(filepath.Join(t.TempDir(), "history.db"))
@@ -250,10 +250,10 @@ func TestCommandExec_LogsProcessManagementFailure(t *testing.T) {
 	}
 }
 
-// TestCommandRead_LogsSandboxFailure covers base spec §24's Agent
-// logging requirement ("sandbox failure") — a per-call setup failure
-// must be distinguishable in the log from a normal non-zero exit, not
-// just folded into processmgr's generic "process exited" line.
+// TestCommandRead_LogsSandboxFailure covers the Agent's "sandbox
+// failure" logging — a per-call setup failure must be distinguishable
+// in the log from a normal non-zero exit, not just folded into
+// processmgr's generic "process exited" line.
 func TestCommandRead_LogsSandboxFailure(t *testing.T) {
 	sandboxMgr := NewManager(alwaysSandboxSetupFailedBackend{}, 4<<20, 4<<20, time.Hour)
 	hist, err := OpenHistoryStore(filepath.Join(t.TempDir(), "history.db"))

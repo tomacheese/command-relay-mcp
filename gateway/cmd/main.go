@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"log"
 	"net/http"
@@ -24,7 +25,8 @@ func main() {
 	reg := gateway.NewRegistry()
 
 	verify := func(deviceID, secret string) bool {
-		return cfg.AgentSecrets[deviceID] != "" && cfg.AgentSecrets[deviceID] == secret
+		expected := cfg.AgentSecrets[deviceID]
+		return expected != "" && subtle.ConstantTimeCompare([]byte(expected), []byte(secret)) == 1
 	}
 
 	mux := http.NewServeMux()
@@ -38,7 +40,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("gateway: azure ad discovery: %v", err)
 		}
-		mux.Handle("/mcp", gateway.NewMCPHTTPHandlerWithVerifier(reg, verifier))
+		mux.Handle("/mcp", gateway.NewMCPHTTPHandlerWithVerifier(reg, verifier, cfg.OAuthRequiredScopes))
 		mux.Handle("/.well-known/oauth-protected-resource", auth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
 			Resource:             cfg.PublicMCPURL,
 			AuthorizationServers: []string{"https://login.microsoftonline.com/" + cfg.OAuthTenantID + "/v2.0"},
@@ -59,11 +61,12 @@ func main() {
 		// http.Server.Shutdown does not know about hijacked WebSocket
 		// connections, so tell every Agent to close explicitly: without
 		// this, an Agent's read would hang instead of erroring and
-		// reconnecting once this Gateway comes back (base spec §27
-		// acceptance criterion #7).
+		// reconnecting once this Gateway comes back.
 		log.Print("gateway: shutting down, disconnecting agents")
 		reg.CloseAll()
-		_ = srv.Shutdown(context.Background())
+		if err := srv.Shutdown(context.Background()); err != nil {
+			log.Printf("gateway: server shutdown error: %v", err)
+		}
 	}()
 
 	log.Printf("gateway: listening on %s", cfg.ListenAddress)

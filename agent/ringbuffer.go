@@ -3,10 +3,9 @@ package agent
 import "sync"
 
 // RingBuffer is a bounded, append-only byte stream with a monotonically
-// increasing logical offset, per base spec §10.2-§10.3. Once capacity is
-// exceeded, the oldest bytes are dropped; ReadFrom reports
-// truncatedBefore when the caller's requested offset has already been
-// dropped.
+// increasing logical offset. Once capacity is exceeded, the oldest
+// bytes are dropped; ReadFrom reports truncatedBefore when the caller's
+// requested offset has already been dropped.
 type RingBuffer struct {
 	mu    sync.Mutex
 	buf   []byte // logical bytes currently retained, oldest first

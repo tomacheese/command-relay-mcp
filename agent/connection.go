@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 	"runtime"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -17,6 +18,12 @@ type Connection struct {
 	cfg          Config
 	dispatcher   *Dispatcher
 	capabilities proto.Capabilities
+	// wg tracks every in-flight per-request handler goroutine across
+	// reconnects. It is owned by Connection, not scoped to a single
+	// runOnce call, so a slow handler left over from a dead connection
+	// can never block the reconnect loop from dialing a new one — only
+	// Run()'s own shutdown path waits for it.
+	wg sync.WaitGroup
 }
 
 func NewConnection(cfg Config, d *Dispatcher, caps proto.Capabilities) *Connection {
@@ -24,9 +31,12 @@ func NewConnection(cfg Config, d *Dispatcher, caps proto.Capabilities) *Connecti
 }
 
 // Run connects, handshakes, serves requests until the connection drops,
-// then reconnects with exponential backoff and jitter (base spec §5.1)
-// until ctx is cancelled.
+// then reconnects with exponential backoff and jitter until ctx is
+// cancelled. It waits for every in-flight per-request handler goroutine
+// to finish before returning, so the caller can safely terminate
+// managed processes only once handling has fully drained.
 func (c *Connection) Run(ctx context.Context) error {
+	defer c.wg.Wait()
 	backoff := time.Second
 	const maxBackoff = 30 * time.Second
 	for {
@@ -71,16 +81,16 @@ func (c *Connection) runOnce(ctx context.Context) error {
 	}
 	log.Printf("agent: connected to gateway %s", c.cfg.GatewayURL)
 
-	// base spec §5.1/§16.1: multiple RPCs are multiplexed on this one
-	// connection, so a slow handler (e.g. command.exec/command.read/
-	// process.wait blocking for up to their own timeout) must never stall
-	// dispatch of other in-flight requests — each request runs in its own
-	// goroutine. writeMu only serializes the write side; coder/websocket's
-	// Conn.Read/Write are each independently safe for one concurrent
-	// caller, but concurrent writers must serialize themselves.
+	// Multiple RPCs are multiplexed on this one connection, so a slow
+	// handler (e.g. command.exec/command.read/process.wait blocking for
+	// up to their own timeout) must never stall dispatch of other
+	// in-flight requests — each request runs in its own goroutine,
+	// tracked by c.wg rather than a WaitGroup scoped to this call (see
+	// the Connection.wg field doc). writeMu only serializes the write
+	// side; coder/websocket's Conn.Read/Write are each independently
+	// safe for one concurrent caller, but concurrent writers must
+	// serialize themselves.
 	var writeMu sync.Mutex
-	var wg sync.WaitGroup
-	defer wg.Wait()
 	for {
 		_, data, err := ws.Read(ctx)
 		if err != nil {
@@ -88,14 +98,20 @@ func (c *Connection) runOnce(ctx context.Context) error {
 		}
 		var req proto.Request
 		if err := json.Unmarshal(data, &req); err != nil {
-			continue // malformed frame; base spec has no wire-level nack, just skip
+			continue // malformed frame; no wire-level nack defined, just skip
 		}
-		wg.Add(1)
+		c.wg.Add(1)
 		go func(req proto.Request) {
-			defer wg.Done()
+			defer c.wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("agent: recovered panic handling request %s (%s): %v\n%s", req.RequestID, req.Method, r, debug.Stack())
+				}
+			}()
 			resp := c.dispatcher.Dispatch(ctx, &req)
 			respData, err := json.Marshal(resp)
 			if err != nil {
+				log.Printf("agent: failed to marshal response for request %s: %v", req.RequestID, err)
 				return
 			}
 			writeMu.Lock()

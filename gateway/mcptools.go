@@ -14,7 +14,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// --- devices_list / device_ping (base spec §19.1) ---
+// --- devices_list / device_ping ---
 
 type DeviceSummary struct {
 	DeviceID string `json:"device_id"`
@@ -31,24 +31,23 @@ type DeviceIDParams struct {
 }
 
 // deviceCall resolves device_id to its AgentConn, or returns a
-// device_offline tool error (base spec §18.1) if it is not registered.
-// It also logs MCP tool invocation metadata and routing failures
-// (base spec §24) — never the params/result payload itself, which may
-// carry command output.
+// device_offline tool error if it is not registered. It also logs MCP
+// tool invocation metadata and routing failures — never the
+// params/result payload itself, which may carry command output.
 func deviceCall(ctx context.Context, reg *Registry, deviceID, method string, params any) (json.RawMessage, error) {
 	conn, ok := reg.Get(deviceID)
 	if !ok {
 		log.Printf("gateway: routing failure: device %q is offline for %s", deviceID, method)
-		return nil, fmt.Errorf("%s: device %q is offline", proto.ErrDeviceOffline, deviceID)
+		return nil, &proto.RPCError{Code: proto.ErrDeviceOffline, Message: fmt.Sprintf("device %q is offline", deviceID)}
 	}
 	log.Printf("gateway: invoking %s on device %q", method, deviceID)
 	return conn.Call(ctx, method, params)
 }
 
-// NewMCPServer registers every V1 tool group (base spec §19.1-§19.5)
-// against the given Registry, for Linux only. Every tool is registered
-// unconditionally regardless of any device's advertised capabilities
-// (proto.Capabilities): base spec §15.3's "MCP tool呼び出しはunsupportedで
+// NewMCPServer registers every V1 tool group against the given
+// Registry, for Linux only. Every tool is registered unconditionally
+// regardless of any device's advertised capabilities
+// (proto.Capabilities): the "MCP tool 呼び出しはunsupported で
 // 失敗させる" requirement is met entirely by the Agent's own per-call
 // capability check (e.g. CommandHandlers.Read returning ErrUnsupported
 // when sandboxMgr is nil), not by the Gateway declining to register or
@@ -88,8 +87,8 @@ func NewMCPServer(reg *Registry) *mcp.Server {
 
 // NewMCPHTTPHandler wraps the MCP server in the Streamable HTTP
 // transport, protected by a fixed bearer token (addendum §6.1). See
-// NewMCPHTTPHandlerWithVerifier for the OAuth-verified alternative (base
-// spec §6.1) — this one stays available for local/e2e use.
+// NewMCPHTTPHandlerWithVerifier for the OAuth-verified alternative —
+// this one stays available for local/e2e use.
 func NewMCPHTTPHandler(reg *Registry, bearerToken string) http.Handler {
 	server := NewMCPServer(reg)
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return server }, nil)
@@ -101,13 +100,20 @@ func NewMCPHTTPHandler(reg *Registry, bearerToken string) http.Handler {
 // this instead of NewMCPHTTPHandler once OAuth is configured; the
 // fixed-bearer-token NewMCPHTTPHandler stays available for local/e2e
 // testing, which has no live Azure tenant to authenticate against.
-func NewMCPHTTPHandlerWithVerifier(reg *Registry, verifier auth.TokenVerifier) http.Handler {
+// requiredScopes, when non-empty, are enforced against the token's own
+// scopes for every tool alike; leave it empty to trust any
+// audience-valid token for every tool (this project's V1 default).
+func NewMCPHTTPHandlerWithVerifier(reg *Registry, verifier auth.TokenVerifier, requiredScopes []string) http.Handler {
 	server := NewMCPServer(reg)
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return server }, nil)
-	return auth.RequireBearerToken(verifier, nil)(mcpHandler)
+	var opts *auth.RequireBearerTokenOptions
+	if len(requiredScopes) > 0 {
+		opts = &auth.RequireBearerTokenOptions{Scopes: requiredScopes}
+	}
+	return auth.RequireBearerToken(verifier, opts)(mcpHandler)
 }
 
-// --- command_exec / command_read (base spec §19.2) ---
+// --- command_exec / command_read ---
 
 type CommandExecToolParams struct {
 	DeviceID  string            `json:"device_id"`
@@ -156,7 +162,7 @@ func registerCommandTools(server *mcp.Server, reg *Registry) {
 		})
 }
 
-// --- process_* (base spec §19.3) ---
+// --- process_* ---
 
 type ProcessStartToolParams struct {
 	DeviceID string            `json:"device_id"`
@@ -277,7 +283,7 @@ func registerProcessTools(server *mcp.Server, reg *Registry) {
 		})
 }
 
-// --- execution_list / execution_get (base spec §19.5) ---
+// --- execution_list / execution_get ---
 
 type ExecutionListToolParams struct {
 	DeviceID string `json:"device_id"`
@@ -317,7 +323,7 @@ func registerExecutionTools(server *mcp.Server, reg *Registry) {
 		})
 }
 
-// --- file_* / directory_create (base spec §14, §19.4) ---
+// --- file_* / directory_create ---
 
 type FilePathToolParams struct {
 	DeviceID string `json:"device_id"`

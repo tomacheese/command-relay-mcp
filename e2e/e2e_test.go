@@ -233,8 +233,7 @@ func TestE2E_CommandExecRunsRealShellCommand(t *testing.T) {
 // spec §27 acceptance criteria #9-10 and addendum §7 scenario 5: after
 // a real command_exec, the execution is retrievable via execution_list
 // / execution_get, and the persisted row never contains stdout/stderr
-// (base spec §12.3) — those fields simply don't exist on
-// agent.Execution.
+// — those fields simply don't exist on agent.Execution.
 func TestE2E_ExecutionHistoryPersistsAndIsQueryableOverMCP(t *testing.T) {
 	h := newHarness(t)
 
@@ -264,10 +263,9 @@ func TestE2E_ExecutionHistoryPersistsAndIsQueryableOverMCP(t *testing.T) {
 	}
 }
 
-// TestE2E_CommandExecTimeoutContinuesAndIsTrackable covers base spec
-// §27 acceptance criterion #5: a command_exec timeout must not kill the
-// underlying process, and the process must remain trackable by
-// process_id afterwards.
+// TestE2E_CommandExecTimeoutContinuesAndIsTrackable covers that a
+// command_exec timeout must not kill the underlying process, and the
+// process must remain trackable by process_id afterwards.
 func TestE2E_CommandExecTimeoutContinuesAndIsTrackable(t *testing.T) {
 	h := newHarness(t)
 
@@ -430,10 +428,10 @@ func (g *restartableGateway) restart(t *testing.T, deviceID, deviceSecret string
 	g.listenAndServe(t, deviceID, deviceSecret)
 }
 
-// TestE2E_ProcessSurvivesGatewayRestart covers base spec §27 acceptance
-// criterion #7: a process the Agent started keeps running through a
-// Gateway restart, and is trackable again over MCP once the Agent has
-// reconnected to the restarted Gateway.
+// TestE2E_ProcessSurvivesGatewayRestart covers that a process the
+// Agent started keeps running through a Gateway restart, and is
+// trackable again over MCP once the Agent has reconnected to the
+// restarted Gateway.
 func TestE2E_ProcessSurvivesGatewayRestart(t *testing.T) {
 	const deviceID = "restart-device"
 	const deviceSecret = "restart-secret"
@@ -476,12 +474,11 @@ func TestE2E_ProcessSurvivesGatewayRestart(t *testing.T) {
 	}
 }
 
-// TestE2E_AgentGracefulShutdownTerminatesProcessTree covers base spec
-// §27 acceptance criterion #8, exercising the real compiled Agent
-// binary (agent/cmd/main.go) as its own OS process — not just calling
-// Manager.TerminateAll in-process — so the actual SIGTERM handling and
-// shutdown wiring is what gets verified: stopping the Agent service
-// terminates every process tree it started.
+// TestE2E_AgentGracefulShutdownTerminatesProcessTree exercises the
+// real compiled Agent binary (agent/cmd/main.go) as its own OS process
+// — not just calling Manager.TerminateAll in-process — so the actual
+// SIGTERM handling and shutdown wiring is what gets verified: stopping
+// the Agent service terminates every process tree it started.
 func TestE2E_AgentGracefulShutdownTerminatesProcessTree(t *testing.T) {
 	const deviceID = "shutdown-device"
 	const deviceSecret = "shutdown-secret"
@@ -549,8 +546,8 @@ func TestE2E_AgentGracefulShutdownTerminatesProcessTree(t *testing.T) {
 	}
 }
 
-// TestE2E_FilesystemToolsRoundTrip covers base spec §27's Filesystem API
-// coverage: file_write, file_read, file_stat, file_move, and file_delete
+// TestE2E_FilesystemToolsRoundTrip covers the Filesystem API's
+// file_write, file_read, file_stat, file_move, and file_delete tools
 // against a real file on disk, driven end to end over MCP.
 func TestE2E_FilesystemToolsRoundTrip(t *testing.T) {
 	h := newHarness(t)
@@ -592,10 +589,10 @@ func TestE2E_FilesystemToolsRoundTrip(t *testing.T) {
 	}
 }
 
-// TestE2E_CommandReadSandboxDeniesWriteAndNetwork covers base spec §27
-// acceptance criteria #11-12 and addendum §4: command_read must deny a
-// write outside its scratch directory and deny network access, driven
-// end to end over MCP against a real sandboxed OS process.
+// TestE2E_CommandReadSandboxDeniesWriteAndNetwork covers that
+// command_read must deny a write outside its scratch directory and
+// deny network access, driven end to end over MCP against a real
+// sandboxed OS process.
 func TestE2E_CommandReadSandboxDeniesWriteAndNetwork(t *testing.T) {
 	h := newHarness(t)
 
@@ -639,8 +636,8 @@ func TestE2E_CommandReadSandboxDeniesWriteAndNetwork(t *testing.T) {
 	if out.ExitCode == nil || *out.ExitCode == 0 {
 		t.Fatalf("out = %+v, expected a non-zero exit from the denied write", out)
 	}
-	// base spec §18.2: the sandbox denying a mutation is still an RPC
-	// success, distinguished from an unrelated non-zero exit by this flag.
+	// The sandbox denying a mutation is still an RPC success,
+	// distinguished from an unrelated non-zero exit by this flag.
 	if !out.SandboxViolation {
 		t.Fatalf("out = %+v, expected sandbox_violation=true for a denied write", out)
 	}

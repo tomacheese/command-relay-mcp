@@ -12,12 +12,10 @@ import (
 	"github.com/coder/websocket"
 )
 
-// TestConnection_MultiplexesConcurrentRequests covers base spec §5.1/
-// §16.1: multiple RPCs must be multiplexed on one connection, so a slow
-// handler in flight must not block a fast request sent right after it
-// from being answered. Before the fix, runOnce's read/dispatch/write
-// loop was fully sequential, so the fast response could only arrive
-// after the slow handler finished.
+// TestConnection_MultiplexesConcurrentRequests covers that multiple
+// RPCs must be multiplexed on one connection, so a slow handler in
+// flight must not block a fast request sent right after it from being
+// answered.
 func TestConnection_MultiplexesConcurrentRequests(t *testing.T) {
 	fastRespondedFirst := make(chan bool, 1)
 

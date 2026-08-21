@@ -23,8 +23,8 @@ func TestRegistry_RegisterGetUnregister(t *testing.T) {
 	}
 }
 
-// TestRegistry_ReconnectRaceDoesNotEvictNewConnection covers base spec
-// §5.2: "新しい接続を採用し、古い接続をclose" — the new connection must
+// TestRegistry_ReconnectRaceDoesNotEvictNewConnection covers that
+// "新しい接続を採用し、古い接続を close" — the new connection must
 // remain the one the registry serves, even once the old connection's
 // readLoop returns (from Register's own old.Close(), in the real
 // wsserver flow) and fires its own deferred Unregister(old). Registered

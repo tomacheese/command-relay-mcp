@@ -62,10 +62,10 @@ func newAzureADTokenVerifier(idv *oidc.IDTokenVerifier) auth.TokenVerifier {
 	}
 }
 
-// logAzureADAuthFailure mirrors NewFixedBearerVerifier's own log line
-// (base spec §24's "authentication failure" requirement) — req may be
-// nil in tests that verify the token in isolation, and RemoteAddr
-// (never the token itself) is the only detail logged either way.
+// logAzureADAuthFailure mirrors NewFixedBearerVerifier's own log line —
+// req may be nil in tests that verify the token in isolation, and
+// RemoteAddr (never the token itself) is the only detail logged either
+// way.
 func logAzureADAuthFailure(req *http.Request) {
 	remoteAddr := "unknown"
 	if req != nil {

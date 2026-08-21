@@ -3,6 +3,7 @@ package backend
 import (
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"syscall"
@@ -14,8 +15,8 @@ import (
 // e.g. `ps`/core dumps). It is NOT how the parent detects setup failure:
 // syscall.Exec on success fully replaces the child's process image with
 // the sandboxed command's, so the same exit code could just as well be
-// that command's own legitimate exit status (base spec §18.2 — a
-// command's own non-zero exit is never a protocol error). Detection
+// that command's own legitimate exit status (a command's own
+// non-zero exit is never a protocol error). Detection
 // instead uses an out-of-band status pipe — see statusPipeFD and
 // ExitResult.SandboxSetupFailed.
 const SandboxSetupFailedExitCode = 111
@@ -34,24 +35,25 @@ const statusPipeFD = 3
 // Landlock restrictions are permanent for whichever process applies
 // them (this is documented, not a bug in go-landlock), so only that
 // short-lived re-exec target may ever call the Landlock API — never
-// this long-running backend's own process (base spec addendum §4).
+// this long-running backend's own process.
 //
 // The child's own user and network namespaces are created here, at
 // process-creation time, via SysProcAttr.Cloneflags — not by the child
 // calling unshare(2) on itself after it starts. Doing it this way avoids
 // the well-known hazards of calling unshare(CLONE_NEWUSER) from inside
 // an already-running, multi-threaded process (which the Go runtime
-// always is): the namespaces exist before the child's own main() ever
+// always is). The namespaces exist before the child's own main() ever
 // runs, and survive its later syscall.Exec by kernel design.
 type SandboxedBackend struct {
 	agentBinary string
 	shell       []string
 }
 
-// NewSandboxedBackend returns a ProcessBackend for command.read (base
-// spec §15, addendum §4). agentBinary must be a binary that recognizes
-// "--landlock-exec -- <argv...>" and applies Landlock + syscall.Exec
-// (agent/cmd/main.go's landlockExecMain, wired in a later task).
+// NewSandboxedBackend returns a ProcessBackend for command.read.
+// agentBinary must be a binary that recognizes "--landlock-exec --
+// <argv...>" and applies Landlock + syscall.Exec — this is
+// agent/cmd/main.go's landlockExecMain, already implemented and wired
+// in there as that binary's hidden subcommand.
 func NewSandboxedBackend(agentBinary string, shell []string) ProcessBackend {
 	return &SandboxedBackend{agentBinary: agentBinary, shell: shell}
 }
@@ -80,9 +82,9 @@ func (b *SandboxedBackend) Start(opts StartOptions) (ProcessHandle, error) {
 		env = append(env, k+"="+v)
 	}
 	cmd.Env = append(env, scratchDirEnvVar+"="+scratchDir)
-	// New process group (Terminate signals the whole tree, base spec
-	// §8.8/§9.1) plus new user+network+PID namespaces (addendum §4/base
-	// spec §15.1 "host process mutation denied"): the uid/gid mappings
+	// New process group (Terminate signals the whole tree) plus new
+	// user+network+PID namespaces ("host process mutation denied"): the
+	// uid/gid mappings
 	// make the child see itself as the same user it already is, so this
 	// works without root. Landlock alone does not restrict signal
 	// delivery, and same-UID kill(2) is otherwise unconditionally allowed
@@ -164,10 +166,12 @@ func (h *sandboxedHandle) Wait() ExitResult {
 	statusData, _ := io.ReadAll(h.statusR)
 	h.statusR.Close()
 	setupFailed := len(statusData) > 0
-	// base spec §15.1: the scratch area is "writable, ephemeral" — the
-	// child process image is gone by the time the command has exited
-	// (syscall.Exec replaced it), so only the parent can remove it.
-	os.RemoveAll(h.scratchDir)
+	// The scratch area is "writable, ephemeral" — the child process
+	// image is gone by the time the command has exited (syscall.Exec
+	// replaced it), so only the parent can remove it.
+	if err := os.RemoveAll(h.scratchDir); err != nil {
+		log.Printf("backend: failed to remove sandbox scratch dir %s: %v", h.scratchDir, err)
+	}
 
 	if err == nil {
 		return ExitResult{ExitCode: 0, SandboxSetupFailed: setupFailed}

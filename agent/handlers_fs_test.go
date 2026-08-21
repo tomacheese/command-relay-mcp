@@ -164,3 +164,17 @@ func TestFileRead_RejectsEmptyPath(t *testing.T) {
 		t.Fatalf("rpcErr = %+v, want invalid_request", rpcErr)
 	}
 }
+
+func TestFileWrite_RejectsUnknownMode(t *testing.T) {
+	h := &FileHandlers{}
+	path := filepath.Join(t.TempDir(), "a.txt")
+
+	params, _ := json.Marshal(FileWriteParams{Path: path, ContentBase64: base64.StdEncoding.EncodeToString([]byte("x")), Mode: "trunc"})
+	_, rpcErr := h.Write(context.Background(), params)
+	if rpcErr == nil || rpcErr.Code != proto.ErrInvalidRequest {
+		t.Fatalf("rpcErr = %+v, want invalid_request", rpcErr)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("file should not have been created for a rejected mode: err=%v", err)
+	}
+}

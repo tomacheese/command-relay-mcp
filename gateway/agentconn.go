@@ -3,7 +3,6 @@ package gateway
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -14,8 +13,7 @@ import (
 )
 
 // AgentConn wraps one Agent's WebSocket connection and multiplexes
-// Gateway-initiated RPCs on it, correlated by request_id (base spec
-// §5.1, §16.5).
+// Gateway-initiated RPCs on it, correlated by request_id.
 type AgentConn struct {
 	deviceID     string
 	os, arch     string
@@ -39,8 +37,8 @@ func newAgentConn(ws *websocket.Conn, hello proto.Hello) *AgentConn {
 func (c *AgentConn) DeviceID() string { return c.deviceID }
 
 // Call sends a request and blocks for the matching response, ctx
-// cancellation, or connection loss (base spec §17: transport loss maps
-// to execution_unknown, which the MCP layer surfaces as an error here).
+// cancellation, or connection loss: transport loss maps to
+// execution_unknown, which the MCP layer surfaces as an error here.
 func (c *AgentConn) Call(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	req, err := proto.NewRequest(method, params)
 	if err != nil {
@@ -76,17 +74,17 @@ func (c *AgentConn) Call(ctx context.Context, method string, params any) (json.R
 		}
 		return resp.Result, nil
 	case <-ctx.Done():
-		// base spec §18.3's "transport timeout" case — the request/response
-		// round trip itself didn't complete in time, distinct from a
+		// This is the "transport timeout" case — the request/response round
+		// trip itself didn't complete in time, distinct from a
 		// command/process wait timeout (which surfaces as timed_out:true in
 		// the result, not a protocol error).
-		return nil, errors.New(proto.ErrTimeout)
+		return nil, &proto.RPCError{Code: proto.ErrTimeout, Message: "RPC timed out waiting for a response"}
 	case <-c.closed:
 		log.Printf("gateway: transport failure: connection to device %q lost mid-call for %s", c.deviceID, method)
 		if proto.IsMutatingMethod(method) {
-			return nil, errors.New(proto.ErrExecutionUnknown)
+			return nil, &proto.RPCError{Code: proto.ErrExecutionUnknown, Message: "connection lost while an execution was in flight; its outcome is unknown"}
 		}
-		return nil, errors.New(proto.ErrTransportLost)
+		return nil, &proto.RPCError{Code: proto.ErrTransportLost, Message: "the underlying transport was lost"}
 	}
 }
 
@@ -101,6 +99,7 @@ func (c *AgentConn) readLoop(ctx context.Context) error {
 		}
 		var resp proto.Response
 		if err := json.Unmarshal(data, &resp); err != nil {
+			log.Printf("gateway: malformed RPC response from device %q: %v", c.deviceID, err)
 			continue
 		}
 		c.mu.Lock()

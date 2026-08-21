@@ -10,7 +10,7 @@ import (
 	"github.com/coder/websocket"
 )
 
-// DeviceVerifier checks an Agent's device credential (base spec §6.2).
+// DeviceVerifier checks an Agent's device credential.
 type DeviceVerifier func(deviceID, secret string) bool
 
 // NewWSServer returns the Agent-facing WebSocket endpoint: accepts the
@@ -21,6 +21,7 @@ func NewWSServer(reg *Registry, verify DeviceVerifier) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := websocket.Accept(w, r, nil)
 		if err != nil {
+			log.Printf("gateway: websocket accept failed: %v", err)
 			return
 		}
 		ctx := r.Context()

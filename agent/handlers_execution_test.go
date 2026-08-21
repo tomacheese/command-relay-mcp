@@ -66,9 +66,8 @@ func TestExecutionHandlers_GetUnknownIsInvalidRequest(t *testing.T) {
 	}
 }
 
-// TestExecutionHandlers_ListAndGetLogSQLiteFailure covers base spec §24's
-// SQLite-failure Agent logging category for the read path: only the
-// write path (RecordStart/RecordEnd) was logged before this fix.
+// TestExecutionHandlers_ListAndGetLogSQLiteFailure covers the Agent's
+// SQLite-failure logging category for the read path.
 func TestExecutionHandlers_ListAndGetLogSQLiteFailure(t *testing.T) {
 	hist, err := OpenHistoryStore(filepath.Join(t.TempDir(), "history.db"))
 	if err != nil {

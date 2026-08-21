@@ -5,11 +5,9 @@ import (
 	"testing"
 )
 
-// TestParseAgentSecrets covers base spec §23's Gateway "agent
-// authentication configuration" setting: it must support more than one
-// device credential pair (base spec §1's multi-device management goal),
-// not just the single AGENT_DEVICE_ID/AGENT_DEVICE_SECRET pair V1 shipped
-// with.
+// TestParseAgentSecrets covers that the Gateway's agent authentication
+// configuration must support more than one device credential pair, not
+// just a single fixed AGENT_DEVICE_ID/AGENT_DEVICE_SECRET pair.
 func TestParseAgentSecrets(t *testing.T) {
 	got := parseAgentSecrets("pine:secret-1,willow:secret-2")
 	want := map[string]string{"pine": "secret-1", "willow": "secret-2"}

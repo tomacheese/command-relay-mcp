@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -9,7 +10,7 @@ import (
 	"command-relay-mcp/internal/version"
 )
 
-// Config holds every Agent setting from base spec §23.
+// Config holds every Agent setting, sourced from environment variables.
 type Config struct {
 	DeviceID           string
 	DeviceSecret       string
@@ -22,10 +23,10 @@ type Config struct {
 	AgentVersion       string
 }
 
-// LoadConfig reads every base spec §23 Agent setting from the
-// environment, applying the spec's recommended defaults. DeviceID,
-// DeviceSecret, and GatewayURL have no default — the caller must
-// validate they were provided (mustEnv in agent/cmd/main.go).
+// LoadConfig reads every Agent setting from the environment, applying
+// documented defaults. DeviceID, DeviceSecret, and GatewayURL have no
+// default — the caller must validate they were provided (mustEnv in
+// agent/cmd/main.go).
 func LoadConfig() Config {
 	return Config{
 		DeviceID:           os.Getenv("DEVICE_ID"),
@@ -58,6 +59,8 @@ func envIntOr(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		} else {
+			log.Printf("agent: invalid value for %s=%q, using default %d: %v", key, v, fallback, err)
 		}
 	}
 	return fallback
@@ -67,6 +70,8 @@ func envDurationOr(key string, fallback time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d
+		} else {
+			log.Printf("agent: invalid value for %s=%q, using default %s: %v", key, v, fallback, err)
 		}
 	}
 	return fallback

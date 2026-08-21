@@ -73,8 +73,8 @@ func TestHistoryStore_UnobservedExitCodeStaysNull(t *testing.T) {
 	if err := store.RecordStart(start); err != nil {
 		t.Fatalf("RecordStart: %v", err)
 	}
-	// Agent crashed before observing exit; base spec §12.4 allows exit_code
-	// to remain NULL forever in this case, so we simply never call RecordEnd.
+	// Agent crashed before observing exit; exit_code is allowed to remain
+	// NULL forever in this case, so we simply never call RecordEnd.
 	got, err := store.Get("exec-2")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -84,9 +84,8 @@ func TestHistoryStore_UnobservedExitCodeStaysNull(t *testing.T) {
 	}
 }
 
-// TestHistoryStore_PurgeOlderThan covers base spec §23's history_retention
-// setting: executions started before the cutoff are deleted, executions
-// on or after it are kept.
+// TestHistoryStore_PurgeOlderThan covers that executions started before
+// the cutoff are deleted, while executions on or after it are kept.
 func TestHistoryStore_PurgeOlderThan(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "history.db")
 	store, err := OpenHistoryStore(dbPath)
@@ -114,5 +113,34 @@ func TestHistoryStore_PurgeOlderThan(t *testing.T) {
 	}
 	if _, err := store.Get("recent"); err != nil {
 		t.Fatalf("recent execution was purged: %v", err)
+	}
+}
+
+func TestHistoryStore_ListOrdersChronologicallyEvenWithZeroNanoseconds(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "history.db")
+	store, err := OpenHistoryStore(dbPath)
+	if err != nil {
+		t.Fatalf("OpenHistoryStore: %v", err)
+	}
+	defer store.Close()
+
+	// A zero-nanosecond timestamp formats with no fractional part under
+	// time.RFC3339Nano, which would otherwise sort before a later
+	// timestamp that does have one, under a plain string comparison.
+	earlier := ExecutionStart{ExecutionID: "earlier", DeviceID: "pine", Mode: "write", Command: "true", StartedAt: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}
+	later := ExecutionStart{ExecutionID: "later", DeviceID: "pine", Mode: "write", Command: "true", StartedAt: time.Date(2024, 1, 1, 0, 0, 0, 500_000_000, time.UTC)}
+	if err := store.RecordStart(earlier); err != nil {
+		t.Fatalf("RecordStart(earlier): %v", err)
+	}
+	if err := store.RecordStart(later); err != nil {
+		t.Fatalf("RecordStart(later): %v", err)
+	}
+
+	list, err := store.List(10)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 2 || list[0].ExecutionID != "later" || list[1].ExecutionID != "earlier" {
+		t.Fatalf("list = %+v, want [later, earlier] (DESC by started_at)", list)
 	}
 }

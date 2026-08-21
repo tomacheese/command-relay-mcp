@@ -72,7 +72,7 @@ type ProcessTerminateResult struct {
 type ProcessSummary struct {
 	ProcessID string `json:"process_id"`
 	OSPID     int    `json:"os_pid"`
-	State     string `json:"state"` // "running" | "exited" (base spec §8.2)
+	State     string `json:"state"` // "running" | "exited"
 	ExitCode  *int   `json:"exit_code,omitempty"`
 	StartedAt string `json:"started_at"`
 }
@@ -100,8 +100,8 @@ func notFound(msg string) *proto.RPCError {
 
 // find looks up id across every Manager this Agent runs processes under.
 // A command_read call that times out leaves its process running under
-// sandboxMgr, not mgr, but base spec §8.5 still requires it to stay
-// trackable via process_read/write/wait/terminate/list afterward.
+// sandboxMgr, not mgr, but it must still stay trackable via
+// process_read/write/wait/terminate/list afterward.
 func (h *ProcessHandlers) find(id string) (rec *ProcessRecord, mgr *Manager, ok bool) {
 	if rec, ok := h.mgr.Get(id); ok {
 		return rec, h.mgr, true
@@ -114,7 +114,7 @@ func (h *ProcessHandlers) find(id string) (rec *ProcessRecord, mgr *Manager, ok 
 	return nil, nil, false
 }
 
-// Start implements process.start (base spec §8.4).
+// Start implements process.start.
 func (h *ProcessHandlers) Start(ctx context.Context, raw json.RawMessage) (any, *proto.RPCError) {
 	var p ProcessStartParams
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -134,8 +134,8 @@ func (h *ProcessHandlers) Start(ctx context.Context, raw json.RawMessage) (any, 
 	}
 	// Unlike command.exec, process.start returns before the process
 	// exits, so nothing else observes its end — record it here whenever
-	// that eventually happens (base spec §12: exit_code stays NULL only
-	// if the Agent itself goes away first, e.g. §12.4's crash case).
+	// that eventually happens. exit_code stays NULL only if the Agent
+	// itself goes away first (e.g. a crash).
 	go func() {
 		exitCode, _ := rec.Wait(context.Background())
 		if err := h.hist.RecordEnd(execID, time.Now(), exitCode); err != nil {
@@ -145,7 +145,7 @@ func (h *ProcessHandlers) Start(ctx context.Context, raw json.RawMessage) (any, 
 	return ProcessStartResult{ProcessID: rec.ID, OSPID: rec.OSPID}, nil
 }
 
-// Read implements process.read: pull-only, offset-based (base spec §10).
+// Read implements process.read: pull-only, offset-based.
 func (h *ProcessHandlers) Read(ctx context.Context, raw json.RawMessage) (any, *proto.RPCError) {
 	var p ProcessReadParams
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -165,7 +165,7 @@ func (h *ProcessHandlers) Read(ctx context.Context, raw json.RawMessage) (any, *
 	}, nil
 }
 
-// Write implements process.write (base spec §8.7).
+// Write implements process.write.
 func (h *ProcessHandlers) Write(ctx context.Context, raw json.RawMessage) (any, *proto.RPCError) {
 	var p ProcessWriteParams
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -182,8 +182,7 @@ func (h *ProcessHandlers) Write(ctx context.Context, raw json.RawMessage) (any, 
 	return struct{}{}, nil
 }
 
-// Wait implements process.wait; a timeout never kills the process
-// (base spec §8.6).
+// Wait implements process.wait; a timeout never kills the process.
 func (h *ProcessHandlers) Wait(ctx context.Context, raw json.RawMessage) (any, *proto.RPCError) {
 	var p ProcessWaitParams
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -193,10 +192,7 @@ func (h *ProcessHandlers) Wait(ctx context.Context, raw json.RawMessage) (any, *
 	if !ok {
 		return nil, notFound("process_id not found: " + p.ProcessID)
 	}
-	timeoutMs := p.TimeoutMs
-	if timeoutMs <= 0 {
-		timeoutMs = defaultWaitTimeoutMs
-	}
+	timeoutMs := clampTimeoutMs(p.TimeoutMs, defaultWaitTimeoutMs)
 	waitCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
 	defer cancel()
 	exitCode, timedOut := rec.Wait(waitCtx)
@@ -204,7 +200,7 @@ func (h *ProcessHandlers) Wait(ctx context.Context, raw json.RawMessage) (any, *
 }
 
 // Terminate implements process.terminate: whole process tree, graceful
-// then forced (base spec §8.8).
+// then forced.
 func (h *ProcessHandlers) Terminate(ctx context.Context, raw json.RawMessage) (any, *proto.RPCError) {
 	var p ProcessTerminateParams
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -212,7 +208,7 @@ func (h *ProcessHandlers) Terminate(ctx context.Context, raw json.RawMessage) (a
 	}
 	graceMs := p.GraceMs
 	if graceMs <= 0 {
-		graceMs = 5000 // base spec §8.8 example
+		graceMs = 5000 // default grace period before SIGKILL
 	}
 	_, mgr, ok := h.find(p.ProcessID)
 	if !ok {
@@ -228,8 +224,8 @@ func (h *ProcessHandlers) Terminate(ctx context.Context, raw json.RawMessage) (a
 	return ProcessTerminateResult{Terminated: true}, nil
 }
 
-// List implements process.list (base spec §19.3), across every Manager
-// this Agent runs processes under (see find).
+// List implements process.list, across every Manager this Agent runs
+// processes under (see find).
 func (h *ProcessHandlers) List(ctx context.Context, raw json.RawMessage) (any, *proto.RPCError) {
 	recs := h.mgr.List()
 	if h.sandboxMgr != nil {

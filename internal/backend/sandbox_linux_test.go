@@ -139,10 +139,9 @@ func TestSandboxedBackend_DeniesNetworkAccess(t *testing.T) {
 	}
 }
 
-// TestSandboxedBackend_RemovesScratchDirAfterExit covers base spec
-// §15.1's "writable, ephemeral" scratch area: it must not accumulate
-// indefinitely under the host's temp directory across command_read
-// invocations.
+// TestSandboxedBackend_RemovesScratchDirAfterExit covers that the
+// "writable, ephemeral" scratch area must not accumulate indefinitely
+// under the host's temp directory across command_read invocations.
 func TestSandboxedBackend_RemovesScratchDirAfterExit(t *testing.T) {
 	helper := buildTestSandboxHelper(t)
 	b := NewSandboxedBackend(helper, []string{"/bin/bash", "-lc"})
@@ -162,10 +161,10 @@ func TestSandboxedBackend_RemovesScratchDirAfterExit(t *testing.T) {
 	}
 }
 
-// TestSandboxedBackend_DeniesSignalingHostProcesses covers base spec
-// §15.1's "host process mutation denied": Landlock alone does not
-// restrict signal delivery, and the sandboxed child otherwise runs as
-// the same host UID as everything else the Agent started, so without a
+// TestSandboxedBackend_DeniesSignalingHostProcesses covers "host
+// process mutation denied": Landlock alone does not restrict signal
+// delivery, and the sandboxed child otherwise runs as the same host
+// UID as everything else the Agent started, so without a
 // PID namespace it could kill(2) any of them.
 func TestSandboxedBackend_DeniesSignalingHostProcesses(t *testing.T) {
 	victim := exec.Command("sleep", "5")
@@ -193,8 +192,8 @@ func TestSandboxedBackend_DeniesSignalingHostProcesses(t *testing.T) {
 }
 
 // TestSandboxedBackend_UserCommandExit111IsNotMisreportedAsSetupFailure
-// covers base spec §18.2: SandboxSetupFailedExitCode (111) is an
-// ordinary, unreserved exit code many programs can legitimately return.
+// covers that SandboxSetupFailedExitCode (111) is an ordinary,
+// unreserved exit code many programs can legitimately return.
 // Because syscall.Exec fully replaces the wrapper's process image on
 // success, the exit code alone can't distinguish "wrapper failed setup"
 // from "the sandboxed command itself exited 111" — this must be resolved

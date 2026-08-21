@@ -160,10 +160,10 @@ func TestAzureADVerifier_RejectsBadSignature(t *testing.T) {
 	}
 }
 
-// TestAzureADVerifier_LogsAuthenticationFailure covers base spec §24's
-// Gateway logging requirement ("authentication failure") for the Azure
-// AD verifier path — the fixed-bearer-token verifier already logs this
-// (gateway/bearer.go); the Azure AD verifier must too.
+// TestAzureADVerifier_LogsAuthenticationFailure covers the Gateway's
+// "authentication failure" logging for the Azure AD verifier path —
+// the fixed-bearer-token verifier already logs this (gateway/bearer.go);
+// the Azure AD verifier must too.
 func TestAzureADVerifier_LogsAuthenticationFailure(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

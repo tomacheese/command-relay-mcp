@@ -51,7 +51,7 @@ func TestLinuxBackend_TerminateKillsProcessGroup(t *testing.T) {
 	}
 }
 
-// TestLinuxBackend_EnvOverridesOnlySpecifiedKeys covers base spec §20:
+// TestLinuxBackend_EnvOverridesOnlySpecifiedKeys covers that
 // StartOptions.Env must override/add only the given keys, not replace
 // the Agent service's whole environment.
 func TestLinuxBackend_EnvOverridesOnlySpecifiedKeys(t *testing.T) {

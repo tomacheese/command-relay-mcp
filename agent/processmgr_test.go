@@ -124,10 +124,9 @@ func TestManager_TerminateAllEndsEveryRunningProcessTree(t *testing.T) {
 	}
 }
 
-// TestManager_TerminateAllLogsFailure covers base spec §24's "unexpected
-// process-management failure" Agent logging category for TerminateAll's
-// shutdown-time termination errors, which were previously discarded
-// silently.
+// TestManager_TerminateAllLogsFailure covers that TerminateAll logs
+// its shutdown-time termination errors under the Agent's
+// "process-management failure" logging category.
 func TestManager_TerminateAllLogsFailure(t *testing.T) {
 	m := NewManager(erroringTerminateBackend{backend.NewLinuxBackend([]string{"/bin/bash", "-lc"})}, 4<<20, 4<<20, time.Hour)
 	if _, err := m.Start(backend.StartOptions{Command: "sleep 1"}); err != nil {
@@ -145,8 +144,8 @@ func TestManager_TerminateAllLogsFailure(t *testing.T) {
 	}
 }
 
-// TestManager_StartGCDiscardsOnlyAfterTheTTLElapses covers base spec
-// §11: a finished process must stay reachable via Get (so
+// TestManager_StartGCDiscardsOnlyAfterTheTTLElapses covers that a
+// finished process must stay reachable via Get (so
 // process_read/process_wait keep working) until finishedTTL has
 // elapsed, and only then be discarded by GC.
 func TestManager_StartGCDiscardsOnlyAfterTheTTLElapses(t *testing.T) {
