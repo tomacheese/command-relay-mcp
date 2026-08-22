@@ -17,13 +17,13 @@ LLM client  --MCP (HTTPS)-->  Gateway  <--WebSocket--  Agent (device A)
 
 ### Gateway
 
+> ⚠️ **`/mcp` has no authentication.** Anyone who can reach the endpoint can run commands on every connected Agent. Do not expose it to an untrusted network without your own reverse-proxy-level access control.
+
 Published to GHCR on every merge to `master`:
 
 ```bash
 docker run -p 8080:8080 \
-  -e PUBLIC_MCP_URL=https://your-domain/mcp \
   -e AGENT_DEVICE_SECRETS=device1:secret1,device2:secret2 \
-  -e MCP_BEARER_TOKEN=xxxx \
   ghcr.io/tomacheese/command-relay-mcp:latest
 ```
 

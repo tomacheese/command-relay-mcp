@@ -32,20 +32,19 @@ func newHarness(t *testing.T) *harness {
 	t.Helper()
 	const deviceID = "e2e-device"
 	const deviceSecret = "e2e-secret"
-	const bearerToken = "e2e-token"
 
 	reg := gateway.NewRegistry()
 	verify := func(id, secret string) bool { return id == deviceID && secret == deviceSecret }
 	wsSrv := httptest.NewServer(gateway.NewWSServer(reg, verify))
 	t.Cleanup(wsSrv.Close)
 
-	mcpSrv := httptest.NewServer(gateway.NewMCPHTTPHandler(reg, bearerToken))
+	mcpSrv := httptest.NewServer(gateway.NewMCPHTTPHandlerNoAuth(reg))
 	t.Cleanup(mcpSrv.Close)
 
 	startTestAgent(t, deviceID, deviceSecret, "ws"+wsSrv.URL[len("http"):])
 	waitForRegistration(t, reg, deviceID)
 
-	return &harness{mcpClient: mcpSession(t, mcpSrv.URL, bearerToken)}
+	return &harness{mcpClient: mcpSession(t, mcpSrv.URL)}
 }
 
 var (
@@ -151,10 +150,10 @@ func waitForRegistration(t *testing.T, reg *gateway.Registry, deviceID string) {
 }
 
 // mcpSession opens a real MCP client session against a Gateway MCP
-// endpoint, authenticated with bearerToken.
-func mcpSession(t *testing.T, endpoint, bearerToken string) *mcp.ClientSession {
+// endpoint.
+func mcpSession(t *testing.T, endpoint string) *mcp.ClientSession {
 	t.Helper()
-	transport := &mcp.StreamableClientTransport{Endpoint: endpoint, HTTPClient: &http.Client{Transport: bearerRoundTripper{token: bearerToken}}}
+	transport := &mcp.StreamableClientTransport{Endpoint: endpoint}
 	client := mcp.NewClient(&mcp.Implementation{Name: "e2e-test-client", Version: "v0.0.0"}, nil)
 	session, err := client.Connect(context.Background(), transport, nil)
 	if err != nil {
@@ -162,13 +161,6 @@ func mcpSession(t *testing.T, endpoint, bearerToken string) *mcp.ClientSession {
 	}
 	t.Cleanup(func() { session.Close() })
 	return session
-}
-
-type bearerRoundTripper struct{ token string }
-
-func (t bearerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	req.Header.Set("Authorization", "Bearer "+t.token)
-	return http.DefaultTransport.RoundTrip(req)
 }
 
 func (h *harness) callTool(t *testing.T, name string, args map[string]any, out any) {
@@ -376,15 +368,14 @@ func TestE2E_ProcessTerminateKillsRealProcessTree(t *testing.T) {
 // it can be torn down and rebuilt on the same port, simulating a
 // Gateway process restart.
 type restartableGateway struct {
-	addr        string
-	bearerToken string
-	srv         *http.Server
-	reg         *gateway.Registry
+	addr string
+	srv  *http.Server
+	reg  *gateway.Registry
 }
 
-func startRestartableGateway(t *testing.T, addr, deviceID, deviceSecret, bearerToken string) *restartableGateway {
+func startRestartableGateway(t *testing.T, addr, deviceID, deviceSecret string) *restartableGateway {
 	t.Helper()
-	g := &restartableGateway{addr: addr, bearerToken: bearerToken}
+	g := &restartableGateway{addr: addr}
 	g.listenAndServe(t, deviceID, deviceSecret)
 	t.Cleanup(func() { g.srv.Close() })
 	return g
@@ -402,7 +393,7 @@ func (g *restartableGateway) listenAndServe(t *testing.T, deviceID, deviceSecret
 	verify := func(id, secret string) bool { return id == deviceID && secret == deviceSecret }
 	mux := http.NewServeMux()
 	mux.Handle("/agent/ws", gateway.NewWSServer(reg, verify))
-	mux.Handle("/mcp", gateway.NewMCPHTTPHandler(reg, g.bearerToken))
+	mux.Handle("/mcp", gateway.NewMCPHTTPHandlerNoAuth(reg))
 
 	g.reg = reg
 	g.srv = &http.Server{Handler: mux}
@@ -435,13 +426,12 @@ func (g *restartableGateway) restart(t *testing.T, deviceID, deviceSecret string
 func TestE2E_ProcessSurvivesGatewayRestart(t *testing.T) {
 	const deviceID = "restart-device"
 	const deviceSecret = "restart-secret"
-	const bearerToken = "restart-token"
 
-	gw := startRestartableGateway(t, "127.0.0.1:0", deviceID, deviceSecret, bearerToken)
+	gw := startRestartableGateway(t, "127.0.0.1:0", deviceID, deviceSecret)
 	startTestAgent(t, deviceID, deviceSecret, "ws://"+gw.addr+"/agent/ws")
 	waitForRegistration(t, gw.reg, deviceID)
 
-	session1 := mcpSession(t, "http://"+gw.addr+"/mcp", bearerToken)
+	session1 := mcpSession(t, "http://"+gw.addr+"/mcp")
 	var started agent.ProcessStartResult
 	callToolOn(t, session1, "process_start", map[string]any{"device_id": deviceID, "command": "sleep 2; echo survived-restart"}, &started)
 	if started.ProcessID == "" || started.OSPID == 0 {
@@ -457,7 +447,7 @@ func TestE2E_ProcessSurvivesGatewayRestart(t *testing.T) {
 		t.Fatalf("expected pid %d to still be running across the Gateway restart: %v", started.OSPID, err)
 	}
 
-	session2 := mcpSession(t, "http://"+gw.addr+"/mcp", bearerToken)
+	session2 := mcpSession(t, "http://"+gw.addr+"/mcp")
 	var waitRes agent.ProcessWaitResult
 	callToolOn(t, session2, "process_wait", map[string]any{"device_id": deviceID, "process_id": started.ProcessID, "timeout_ms": 5000}, &waitRes)
 	if waitRes.TimedOut || waitRes.ExitCode == nil || *waitRes.ExitCode != 0 {
@@ -482,9 +472,8 @@ func TestE2E_ProcessSurvivesGatewayRestart(t *testing.T) {
 func TestE2E_AgentGracefulShutdownTerminatesProcessTree(t *testing.T) {
 	const deviceID = "shutdown-device"
 	const deviceSecret = "shutdown-secret"
-	const bearerToken = "shutdown-token"
 
-	gw := startRestartableGateway(t, "127.0.0.1:0", deviceID, deviceSecret, bearerToken)
+	gw := startRestartableGateway(t, "127.0.0.1:0", deviceID, deviceSecret)
 
 	binPath := filepath.Join(t.TempDir(), "command-relay-agent")
 	build := exec.Command("go", "build", "-o", binPath, "command-relay-mcp/agent/cmd")
@@ -511,7 +500,7 @@ func TestE2E_AgentGracefulShutdownTerminatesProcessTree(t *testing.T) {
 
 	waitForRegistration(t, gw.reg, deviceID)
 
-	session := mcpSession(t, "http://"+gw.addr+"/mcp", bearerToken)
+	session := mcpSession(t, "http://"+gw.addr+"/mcp")
 	var started agent.ProcessStartResult
 	callToolOn(t, session, "process_start", map[string]any{"device_id": deviceID, "command": "sleep 30"}, &started)
 	if started.OSPID == 0 {

@@ -5,14 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
 	"command-relay-mcp/agent"
 	"command-relay-mcp/internal/proto"
 	"github.com/coder/websocket"
-	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -31,14 +29,11 @@ func TestMCPServer_DevicesListAndPing(t *testing.T) {
 	d := newTestDialedDevice(t, wsSrv.URL, "pine")
 	defer d.Close()
 
-	handler := NewMCPHTTPHandler(reg, "test-token")
+	handler := NewMCPHTTPHandlerNoAuth(reg)
 	mcpSrv := httptest.NewServer(handler)
 	defer mcpSrv.Close()
 
-	transport := &mcp.StreamableClientTransport{
-		Endpoint:   mcpSrv.URL,
-		HTTPClient: bearerClient("test-token"),
-	}
+	transport := &mcp.StreamableClientTransport{Endpoint: mcpSrv.URL}
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "v0.0.0"}, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -80,14 +75,11 @@ func TestMCPServer_CommandExecCarriesSessionAndSubject(t *testing.T) {
 	d := newTestDialedDevice(t, wsSrv.URL, "pine")
 	defer d.Close()
 
-	handler := NewMCPHTTPHandler(reg, "test-token")
+	handler := NewMCPHTTPHandlerNoAuth(reg)
 	mcpSrv := httptest.NewServer(handler)
 	defer mcpSrv.Close()
 
-	transport := &mcp.StreamableClientTransport{
-		Endpoint:   mcpSrv.URL,
-		HTTPClient: bearerClient("test-token"),
-	}
+	transport := &mcp.StreamableClientTransport{Endpoint: mcpSrv.URL}
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "v0.0.0"}, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -113,75 +105,6 @@ func TestMCPServer_CommandExecCarriesSessionAndSubject(t *testing.T) {
 	}
 }
 
-func TestNewMCPHTTPHandlerWithVerifier_UsesGivenVerifier(t *testing.T) {
-	reg := NewRegistry()
-	calls := 0
-	verifier := func(ctx context.Context, presented string, req *http.Request) (*auth.TokenInfo, error) {
-		calls++
-		if presented != "custom-token" {
-			return nil, auth.ErrInvalidToken
-		}
-		return &auth.TokenInfo{Expiration: time.Now().Add(time.Hour)}, nil
-	}
-	handler := NewMCPHTTPHandlerWithVerifier(reg, verifier, nil, "https://gateway.example.invalid/.well-known/oauth-protected-resource")
-	srv := httptest.NewServer(handler)
-	defer srv.Close()
-
-	resp, err := bearerClient("custom-token").Post(srv.URL, "application/json", nil)
-	if err != nil {
-		t.Fatalf("POST: %v", err)
-	}
-	defer resp.Body.Close()
-	if calls == 0 {
-		t.Fatal("custom verifier was never called")
-	}
-	if resp.StatusCode == http.StatusUnauthorized {
-		t.Fatalf("status = %d, custom verifier should have accepted the token", resp.StatusCode)
-	}
-}
-
-func TestNewMCPHTTPHandlerWithVerifier_SetsResourceMetadataOnUnauthenticated(t *testing.T) {
-	reg := NewRegistry()
-	verifier := func(ctx context.Context, presented string, req *http.Request) (*auth.TokenInfo, error) {
-		return nil, auth.ErrInvalidToken
-	}
-	handler := NewMCPHTTPHandlerWithVerifier(reg, verifier, nil, "https://gateway.example.invalid/.well-known/oauth-protected-resource")
-	srv := httptest.NewServer(handler)
-	defer srv.Close()
-
-	resp, err := http.Post(srv.URL, "application/json", nil)
-	if err != nil {
-		t.Fatalf("POST: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
-	}
-	wwwAuth := resp.Header.Get("WWW-Authenticate")
-	if !strings.Contains(wwwAuth, `resource_metadata="https://gateway.example.invalid/.well-known/oauth-protected-resource"`) {
-		t.Fatalf("WWW-Authenticate = %q, want it to reference the resource metadata URL", wwwAuth)
-	}
-}
-
-func TestNewMCPHTTPHandlerWithVerifier_EnforcesRequiredScopes(t *testing.T) {
-	reg := NewRegistry()
-	verifier := func(ctx context.Context, presented string, req *http.Request) (*auth.TokenInfo, error) {
-		return &auth.TokenInfo{Expiration: time.Now().Add(time.Hour), Scopes: []string{"read"}}, nil
-	}
-	handler := NewMCPHTTPHandlerWithVerifier(reg, verifier, []string{"admin"}, "https://gateway.example.invalid/.well-known/oauth-protected-resource")
-	srv := httptest.NewServer(handler)
-	defer srv.Close()
-
-	resp, err := bearerClient("any-token").Post(srv.URL, "application/json", nil)
-	if err != nil {
-		t.Fatalf("POST: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d for a token missing a required scope", resp.StatusCode, http.StatusForbidden)
-	}
-}
-
 func TestMCPServer_FileReadRoutesToDevice(t *testing.T) {
 	reg := NewRegistry()
 	wsSrv := newFakeAgentServer(t, reg)
@@ -190,11 +113,11 @@ func TestMCPServer_FileReadRoutesToDevice(t *testing.T) {
 	d := newTestDialedDevice(t, wsSrv.URL, "pine")
 	defer d.Close()
 
-	handler := NewMCPHTTPHandler(reg, "test-token")
+	handler := NewMCPHTTPHandlerNoAuth(reg)
 	mcpSrv := httptest.NewServer(handler)
 	defer mcpSrv.Close()
 
-	transport := &mcp.StreamableClientTransport{Endpoint: mcpSrv.URL, HTTPClient: bearerClient("test-token")}
+	transport := &mcp.StreamableClientTransport{Endpoint: mcpSrv.URL}
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "v0.0.0"}, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -223,9 +146,12 @@ func TestMCPServer_FileReadRoutesToDevice(t *testing.T) {
 	}
 }
 
-func TestMCPServer_RejectsMissingBearerToken(t *testing.T) {
+// TestMCPServer_AcceptsRequestWithNoCredentials guarantees the whole
+// point of this handler: /mcp must not reject a request just because it
+// carries no Authorization header at all.
+func TestMCPServer_AcceptsRequestWithNoCredentials(t *testing.T) {
 	reg := NewRegistry()
-	handler := NewMCPHTTPHandler(reg, "test-token")
+	handler := NewMCPHTTPHandlerNoAuth(reg)
 	mcpSrv := httptest.NewServer(handler)
 	defer mcpSrv.Close()
 
@@ -234,25 +160,9 @@ func TestMCPServer_RejectsMissingBearerToken(t *testing.T) {
 		t.Fatalf("POST: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		t.Fatalf("status = %d, want no auth-based rejection", resp.StatusCode)
 	}
-}
-
-// bearerClient returns an *http.Client that adds the given bearer token
-// to every outgoing request, so tests can drive auth.RequireBearerToken.
-func bearerClient(token string) *http.Client {
-	return &http.Client{Transport: bearerTransport{token: token, base: http.DefaultTransport}}
-}
-
-type bearerTransport struct {
-	token string
-	base  http.RoundTripper
-}
-
-func (t bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	req.Header.Set("Authorization", "Bearer "+t.token)
-	return t.base.RoundTrip(req)
 }
 
 type testDialedDevice struct {
