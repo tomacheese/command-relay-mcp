@@ -7,16 +7,20 @@ import (
 )
 
 // GatewayConfig holds every Gateway setting, sourced from environment
-// variables.
+// variables. MCPListenAddress and AgentListenAddress are separate ports so
+// an operator can expose /mcp (no authentication) through a public
+// tunnel while keeping /agent/ws on a port scoped to Agents only.
 type GatewayConfig struct {
-	ListenAddress string
-	AgentSecrets  map[string]string // device_id -> device_secret, supporting multiple devices
+	MCPListenAddress   string
+	AgentListenAddress string
+	AgentSecrets       map[string]string // device_id -> device_secret, supporting multiple devices
 }
 
 func LoadGatewayConfig() GatewayConfig {
 	return GatewayConfig{
-		ListenAddress: envOr("LISTEN_ADDRESS", ":8080"),
-		AgentSecrets:  parseAgentSecrets(os.Getenv("AGENT_DEVICE_SECRETS")),
+		MCPListenAddress:   envOr("MCP_LISTEN_ADDRESS", ":8080"),
+		AgentListenAddress: envOr("AGENT_LISTEN_ADDRESS", ":8081"),
+		AgentSecrets:       parseAgentSecrets(os.Getenv("AGENT_DEVICE_SECRETS")),
 	}
 }
 

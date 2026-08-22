@@ -17,12 +17,12 @@ LLM client  --MCP (HTTPS)-->  Gateway  <--WebSocket--  Agent (device A)
 
 ### Gateway
 
-> ⚠️ **`/mcp` has no authentication.** Anyone who can reach the endpoint can run commands on every connected Agent. Do not expose it to an untrusted network without your own reverse-proxy-level access control.
+> ⚠️ **`/mcp` has no authentication.** Anyone who can reach it can run commands on every connected Agent. Do not expose it to an untrusted network without your own reverse-proxy-level access control. `/mcp` (`MCP_LISTEN_ADDRESS`, default `:8080`) and `/agent/ws` (`AGENT_LISTEN_ADDRESS`, default `:8081`) listen on separate ports, so you can expose only the `/mcp` port through a public tunnel while keeping the Agent port scoped to Agents only.
 
 Published to GHCR on every merge to `master`:
 
 ```bash
-docker run -p 8080:8080 \
+docker run -p 8080:8080 -p 8081:8081 \
   -e AGENT_DEVICE_SECRETS=device1:secret1,device2:secret2 \
   ghcr.io/tomacheese/command-relay-mcp:latest
 ```

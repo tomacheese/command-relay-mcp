@@ -27,12 +27,10 @@ func main() {
 		return expected != "" && subtle.ConstantTimeCompare([]byte(expected), []byte(secret)) == 1
 	}
 
-	mux := http.NewServeMux()
-	mux.Handle("/agent/ws", gateway.NewWSServer(reg, verify))
-	mux.Handle("/mcp", gateway.NewMCPHTTPHandlerNoAuth(reg))
 	log.Print("gateway: MCP endpoint has NO AUTHENTICATION — do not expose it to an untrusted network")
 
-	srv := &http.Server{Addr: cfg.ListenAddress, Handler: mux}
+	agentSrv := &http.Server{Addr: cfg.AgentListenAddress, Handler: gateway.NewWSServer(reg, verify)}
+	mcpSrv := &http.Server{Addr: cfg.MCPListenAddress, Handler: gateway.NewMCPHTTPHandlerNoAuth(reg)}
 
 	go func() {
 		<-ctx.Done()
@@ -42,13 +40,23 @@ func main() {
 		// reconnecting once this Gateway comes back.
 		log.Print("gateway: shutting down, disconnecting agents")
 		reg.CloseAll()
-		if err := srv.Shutdown(context.Background()); err != nil {
-			log.Printf("gateway: server shutdown error: %v", err)
+		if err := agentSrv.Shutdown(context.Background()); err != nil {
+			log.Printf("gateway: agent server shutdown error: %v", err)
+		}
+		if err := mcpSrv.Shutdown(context.Background()); err != nil {
+			log.Printf("gateway: mcp server shutdown error: %v", err)
 		}
 	}()
 
-	log.Printf("gateway: listening on %s", cfg.ListenAddress)
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	go func() {
+		log.Printf("gateway: agent endpoint listening on %s", cfg.AgentListenAddress)
+		if err := agentSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	}()
+
+	log.Printf("gateway: mcp endpoint listening on %s", cfg.MCPListenAddress)
+	if err := mcpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
 }
