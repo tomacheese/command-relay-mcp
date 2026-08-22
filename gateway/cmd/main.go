@@ -22,9 +22,8 @@ func main() {
 
 	reg := gateway.NewRegistry()
 
-	verify := func(deviceID, secret string) bool {
-		expected := cfg.AgentSecrets[deviceID]
-		return expected != "" && subtle.ConstantTimeCompare([]byte(expected), []byte(secret)) == 1
+	verify := func(secret string) bool {
+		return cfg.AgentSecret != "" && subtle.ConstantTimeCompare([]byte(cfg.AgentSecret), []byte(secret)) == 1
 	}
 
 	log.Print("gateway: MCP endpoint has NO AUTHENTICATION — do not expose it to an untrusted network")

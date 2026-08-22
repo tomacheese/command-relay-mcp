@@ -23,7 +23,7 @@ Published to GHCR on every merge to `master`:
 
 ```bash
 docker run -p 8080:8080 -p 8081:8081 \
-  -e AGENT_DEVICE_SECRETS=device1:secret1,device2:secret2 \
+  -e AGENT_SHARED_SECRET=secret \
   ghcr.io/tomacheese/command-relay-mcp:latest
 ```
 

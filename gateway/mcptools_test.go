@@ -17,7 +17,7 @@ import (
 // fakeAgentServer is a real WS server acting as the Agent side, so this
 // test exercises the MCP<->Registry<->AgentConn wiring end to end.
 func newFakeAgentServer(t *testing.T, reg *Registry) *httptest.Server {
-	verify := func(deviceID, secret string) bool { return true }
+	verify := func(secret string) bool { return true }
 	return httptest.NewServer(NewWSServer(reg, verify))
 }
 

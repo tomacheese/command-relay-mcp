@@ -10,8 +10,8 @@ import (
 	"github.com/coder/websocket"
 )
 
-// DeviceVerifier checks an Agent's device credential.
-type DeviceVerifier func(deviceID, secret string) bool
+// DeviceVerifier checks an Agent's shared secret.
+type DeviceVerifier func(secret string) bool
 
 // NewWSServer returns the Agent-facing WebSocket endpoint: accepts the
 // connection, reads the hello handshake, verifies the device
@@ -36,7 +36,7 @@ func NewWSServer(reg *Registry, verify DeviceVerifier) http.Handler {
 			ws.Close(websocket.StatusProtocolError, "invalid hello")
 			return
 		}
-		if !verify(hello.DeviceID, hello.DeviceSecret) {
+		if !verify(hello.DeviceSecret) {
 			log.Printf("gateway: authentication failure for device %q", hello.DeviceID)
 			ws.Close(websocket.StatusPolicyViolation, "invalid device credential")
 			return

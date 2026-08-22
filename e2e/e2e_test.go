@@ -34,7 +34,7 @@ func newHarness(t *testing.T) *harness {
 	const deviceSecret = "e2e-secret"
 
 	reg := gateway.NewRegistry()
-	verify := func(id, secret string) bool { return id == deviceID && secret == deviceSecret }
+	verify := func(secret string) bool { return secret == deviceSecret }
 	wsSrv := httptest.NewServer(gateway.NewWSServer(reg, verify))
 	t.Cleanup(wsSrv.Close)
 
@@ -390,7 +390,7 @@ func (g *restartableGateway) listenAndServe(t *testing.T, deviceID, deviceSecret
 	g.addr = ln.Addr().String()
 
 	reg := gateway.NewRegistry()
-	verify := func(id, secret string) bool { return id == deviceID && secret == deviceSecret }
+	verify := func(secret string) bool { return secret == deviceSecret }
 	mux := http.NewServeMux()
 	mux.Handle("/agent/ws", gateway.NewWSServer(reg, verify))
 	mux.Handle("/mcp", gateway.NewMCPHTTPHandlerNoAuth(reg))

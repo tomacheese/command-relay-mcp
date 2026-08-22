@@ -13,7 +13,7 @@ import (
 
 func TestWSServer_AcceptsValidCredentialAndRegisters(t *testing.T) {
 	reg := NewRegistry()
-	verify := func(deviceID, secret string) bool { return deviceID == "pine" && secret == "s3cr3t" }
+	verify := func(secret string) bool { return secret == "s3cr3t" }
 	srv := httptest.NewServer(NewWSServer(reg, verify))
 	defer srv.Close()
 
@@ -43,7 +43,7 @@ func TestWSServer_AcceptsValidCredentialAndRegisters(t *testing.T) {
 
 func TestWSServer_RejectsInvalidCredential(t *testing.T) {
 	reg := NewRegistry()
-	verify := func(deviceID, secret string) bool { return false }
+	verify := func(secret string) bool { return false }
 	srv := httptest.NewServer(NewWSServer(reg, verify))
 	defer srv.Close()
 
@@ -71,7 +71,7 @@ func TestWSServer_RejectsInvalidCredential(t *testing.T) {
 
 func TestRegistry_CloseAllDropsRealConnectionsAndClearsTheRegistry(t *testing.T) {
 	reg := NewRegistry()
-	verify := func(deviceID, secret string) bool { return deviceID == "pine" && secret == "s3cr3t" }
+	verify := func(secret string) bool { return secret == "s3cr3t" }
 	srv := httptest.NewServer(NewWSServer(reg, verify))
 	defer srv.Close()
 
