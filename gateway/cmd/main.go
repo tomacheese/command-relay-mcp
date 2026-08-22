@@ -9,19 +9,11 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"net/url"
 	"os/signal"
 	"syscall"
 
 	"command-relay-mcp/gateway"
-	"github.com/modelcontextprotocol/go-sdk/auth"
-	"github.com/modelcontextprotocol/go-sdk/oauthex"
 )
-
-// protectedResourceMetadataPath is shared between the mux route and the
-// WWW-Authenticate resource_metadata URL below so the two can never drift
-// apart.
-const protectedResourceMetadataPath = "/.well-known/oauth-protected-resource"
 
 func main() {
 	cfg := gateway.LoadGatewayConfig()
@@ -35,49 +27,10 @@ func main() {
 		return expected != "" && subtle.ConstantTimeCompare([]byte(expected), []byte(secret)) == 1
 	}
 
-	mux := http.NewServeMux()
-	mux.Handle("/agent/ws", gateway.NewWSServer(reg, verify))
+	log.Print("gateway: MCP endpoint has NO AUTHENTICATION — do not expose it to an untrusted network")
 
-	if cfg.OAuthTenantID != "" && cfg.OAuthAudience != "" {
-		if cfg.PublicMCPURL == "" {
-			log.Fatal("PUBLIC_MCP_URL must be set when AZURE_TENANT_ID + AZURE_AUDIENCE are set: the protected-resource metadata's resource field (RFC 9728 §2) needs the externally reachable /mcp URL, which ListenAddress (a local bind address) cannot provide")
-		}
-		verifier, err := gateway.NewAzureADVerifier(ctx, cfg.OAuthTenantID, cfg.OAuthAudience)
-		if err != nil {
-			log.Fatalf("gateway: azure ad discovery: %v", err)
-		}
-		publicMCPURL, err := url.Parse(cfg.PublicMCPURL)
-		if err != nil {
-			log.Fatalf("gateway: invalid PUBLIC_MCP_URL: %v", err)
-		}
-		// authServerIssuer is this Gateway's own origin, not Azure's. The
-		// metadata, authorize, and token handlers below all proxy Azure AD
-		// from here (see NewAzureADOAuthHandlers).
-		authServerIssuer := publicMCPURL.Scheme + "://" + publicMCPURL.Host
-		oauthHandlers, err := gateway.NewAzureADOAuthHandlers(ctx, cfg.OAuthTenantID, authServerIssuer)
-		if err != nil {
-			log.Fatalf("gateway: azure ad oauth proxy: %v", err)
-		}
-		resourceMetadataURL := authServerIssuer + protectedResourceMetadataPath
-		mux.Handle("/mcp", gateway.NewMCPHTTPHandlerWithVerifier(reg, verifier, cfg.OAuthRequiredScopes, resourceMetadataURL))
-		mux.Handle("/.well-known/oauth-authorization-server", oauthHandlers.Metadata)
-		mux.Handle(gateway.OAuthAuthorizePath, oauthHandlers.Authorize)
-		mux.Handle(gateway.OAuthTokenPath, oauthHandlers.Token)
-		scopesSupported := gateway.AzureDefaultScope(cfg.OAuthAudience)
-		mux.Handle(protectedResourceMetadataPath, auth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
-			Resource:             cfg.PublicMCPURL,
-			AuthorizationServers: []string{authServerIssuer},
-			ScopesSupported:      []string{scopesSupported},
-		}))
-		log.Print("gateway: MCP endpoint protected by Azure AD OAuth")
-	} else {
-		if cfg.BearerToken == "" {
-			log.Fatal("MCP_BEARER_TOKEN must be set (or AZURE_TENANT_ID + AZURE_AUDIENCE for OAuth)")
-		}
-		mux.Handle("/mcp", gateway.NewMCPHTTPHandler(reg, cfg.BearerToken))
-	}
-
-	srv := &http.Server{Addr: cfg.ListenAddress, Handler: mux}
+	agentSrv := &http.Server{Addr: cfg.AgentListenAddress, Handler: gateway.NewWSServer(reg, verify)}
+	mcpSrv := &http.Server{Addr: cfg.MCPListenAddress, Handler: gateway.NewMCPHTTPHandlerNoAuth(reg)}
 
 	go func() {
 		<-ctx.Done()
@@ -87,13 +40,23 @@ func main() {
 		// reconnecting once this Gateway comes back.
 		log.Print("gateway: shutting down, disconnecting agents")
 		reg.CloseAll()
-		if err := srv.Shutdown(context.Background()); err != nil {
-			log.Printf("gateway: server shutdown error: %v", err)
+		if err := agentSrv.Shutdown(context.Background()); err != nil {
+			log.Printf("gateway: agent server shutdown error: %v", err)
+		}
+		if err := mcpSrv.Shutdown(context.Background()); err != nil {
+			log.Printf("gateway: mcp server shutdown error: %v", err)
 		}
 	}()
 
-	log.Printf("gateway: listening on %s", cfg.ListenAddress)
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	go func() {
+		log.Printf("gateway: agent endpoint listening on %s", cfg.AgentListenAddress)
+		if err := agentSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	}()
+
+	log.Printf("gateway: mcp endpoint listening on %s", cfg.MCPListenAddress)
+	if err := mcpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
 }
