@@ -68,7 +68,7 @@ func TestMCPServer_DevicesListAndPing(t *testing.T) {
 	}
 }
 
-func TestMCPServer_CommandExecCarriesSessionAndSubject(t *testing.T) {
+func TestMCPServer_CommandExecCarriesClientContextID(t *testing.T) {
 	reg := NewRegistry()
 	wsSrv := newFakeAgentServer(t, reg)
 	defer wsSrv.Close()
@@ -92,7 +92,7 @@ func TestMCPServer_CommandExecCarriesSessionAndSubject(t *testing.T) {
 
 	res, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "command_exec",
-		Arguments: map[string]any{"device_id": "pine", "command": "true"},
+		Arguments: map[string]any{"device_id": "pine", "command": "true", "client_context_id": "ctx-1"},
 	})
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
@@ -101,8 +101,8 @@ func TestMCPServer_CommandExecCarriesSessionAndSubject(t *testing.T) {
 		t.Fatalf("command_exec returned tool error: %+v", res.Content)
 	}
 
-	if d.lastClientContextID == "" {
-		t.Fatal("Agent stub never received a non-empty client_context_id")
+	if d.lastClientContextID != "ctx-1" {
+		t.Fatalf("lastClientContextID = %q, want %q", d.lastClientContextID, "ctx-1")
 	}
 }
 
@@ -187,6 +187,35 @@ func TestMCPServer_InitializeRespondsWithJSONNotSSE(t *testing.T) {
 
 	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 		t.Fatalf("Content-Type = %q, want application/json", ct)
+	}
+}
+
+// TestMCPServer_StatelessProtocolToolsListSucceeds verifies the modern
+// per-request "_meta" protocol-version style gets a 200, not the 400 a
+// non-stateless server returns for it.
+func TestMCPServer_StatelessProtocolToolsListSucceeds(t *testing.T) {
+	reg := NewRegistry()
+	handler := NewMCPHTTPHandlerNoAuth(reg)
+	mcpSrv := httptest.NewServer(handler)
+	defer mcpSrv.Close()
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
+	req, err := http.NewRequest(http.MethodPost, mcpSrv.URL, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Mcp-Protocol-Version", "2026-07-28")
+	req.Header.Set("Mcp-Method", "tools/list")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 }
 
