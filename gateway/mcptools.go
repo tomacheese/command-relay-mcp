@@ -84,8 +84,10 @@ func NewMCPServer(reg *Registry) *mcp.Server {
 	return server
 }
 
-// NewMCPHTTPHandlerNoAuth wraps the MCP server in the Streamable HTTP
-// transport with no authentication. /mcp accepts any request as-is.
+// NewMCPHTTPHandlerNoAuth is a deliberate, temporary rollback: OAuth and
+// bearer-token verification were both removed to unblock a client whose
+// connector setup failed against them. Re-add a verifier before this
+// runs on anything but a trusted network.
 func NewMCPHTTPHandlerNoAuth(reg *Registry) http.Handler {
 	server := NewMCPServer(reg)
 	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return server }, nil)

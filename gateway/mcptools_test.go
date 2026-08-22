@@ -146,9 +146,6 @@ func TestMCPServer_FileReadRoutesToDevice(t *testing.T) {
 	}
 }
 
-// TestMCPServer_AcceptsRequestWithNoCredentials guarantees the whole
-// point of this handler: /mcp must not reject a request just because it
-// carries no Authorization header at all.
 func TestMCPServer_AcceptsRequestWithNoCredentials(t *testing.T) {
 	reg := NewRegistry()
 	handler := NewMCPHTTPHandlerNoAuth(reg)

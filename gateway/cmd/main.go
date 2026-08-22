@@ -30,7 +30,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/agent/ws", gateway.NewWSServer(reg, verify))
 	mux.Handle("/mcp", gateway.NewMCPHTTPHandlerNoAuth(reg))
-	log.Print("gateway: MCP endpoint has NO AUTHENTICATION (temporary, see project history)")
+	log.Print("gateway: MCP endpoint has NO AUTHENTICATION — do not expose it to an untrusted network")
 
 	srv := &http.Server{Addr: cfg.ListenAddress, Handler: mux}
 
