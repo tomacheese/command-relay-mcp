@@ -50,7 +50,7 @@ func dialRegisteredDevice(t *testing.T, srv *httptest.Server, reg *Registry, dev
 // error the caller can't map to any of the required error codes.
 func TestAgentConn_CallOnCtxTimeoutReturnsTimeoutCode(t *testing.T) {
 	reg := NewRegistry()
-	verify := func(deviceID, secret string) bool { return secret == "s3cr3t" }
+	verify := func(secret string) bool { return secret == "s3cr3t" }
 	srv := httptest.NewServer(NewWSServer(reg, verify))
 	defer srv.Close()
 
@@ -76,7 +76,7 @@ func TestAgentConn_CallOnCtxTimeoutReturnsTimeoutCode(t *testing.T) {
 // Agent side of the same connection).
 func TestAgentConn_ConcurrentCallsDoNotCorruptTransport(t *testing.T) {
 	reg := NewRegistry()
-	verify := func(deviceID, secret string) bool { return secret == "s3cr3t" }
+	verify := func(secret string) bool { return secret == "s3cr3t" }
 	srv := httptest.NewServer(NewWSServer(reg, verify))
 	defer srv.Close()
 
@@ -142,7 +142,7 @@ func TestAgentConn_CallOnTransportLoss(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.method, func(t *testing.T) {
 			reg := NewRegistry()
-			verify := func(deviceID, secret string) bool { return secret == "s3cr3t" }
+			verify := func(secret string) bool { return secret == "s3cr3t" }
 			srv := httptest.NewServer(NewWSServer(reg, verify))
 			defer srv.Close()
 
