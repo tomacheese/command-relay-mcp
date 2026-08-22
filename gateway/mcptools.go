@@ -93,6 +93,17 @@ func NewMCPHTTPHandlerNoAuth(reg *Registry) http.Handler {
 	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return server }, nil)
 }
 
+// NewMCPMux mounts the MCP handler only at /mcp: a client probing an
+// unrelated well-known path (e.g. OAuth discovery) must get a plain
+// 404, not the MCP handler's own 400 "Mcp-Session-Id header required"
+// — some clients treat that malformed-looking response as a discovery
+// failure instead of "no OAuth here".
+func NewMCPMux(reg *Registry) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", NewMCPHTTPHandlerNoAuth(reg))
+	return mux
+}
+
 // --- command_exec / command_read ---
 
 type CommandExecToolParams struct {
