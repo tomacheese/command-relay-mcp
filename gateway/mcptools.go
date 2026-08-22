@@ -90,7 +90,14 @@ func NewMCPServer(reg *Registry) *mcp.Server {
 // runs on anything but a trusted network.
 func NewMCPHTTPHandlerNoAuth(reg *Registry) http.Handler {
 	server := NewMCPServer(reg)
-	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return server }, nil)
+	// JSONResponse: without this, every /mcp response streams as SSE,
+	// and ChatGPT's tunnel-client discovery probe treats that as invalid.
+	//
+	// This applies to every tool call, not only discovery. The Gateway's
+	// tools already return one final result instead of streaming
+	// interim progress, so no client-visible behavior is lost.
+	opts := &mcp.StreamableHTTPOptions{JSONResponse: true}
+	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return server }, opts)
 }
 
 // NewMCPMux mounts the MCP handler only at /mcp, so a probe to an

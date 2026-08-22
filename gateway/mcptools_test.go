@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -159,6 +160,33 @@ func TestMCPServer_AcceptsRequestWithNoCredentials(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		t.Fatalf("status = %d, want no auth-based rejection", resp.StatusCode)
+	}
+}
+
+// TestMCPServer_InitializeRespondsWithJSONNotSSE verifies a single-shot
+// request gets back application/json rather than text/event-stream (see
+// NewMCPHTTPHandlerNoAuth for why).
+func TestMCPServer_InitializeRespondsWithJSONNotSSE(t *testing.T) {
+	reg := NewRegistry()
+	handler := NewMCPHTTPHandlerNoAuth(reg)
+	mcpSrv := httptest.NewServer(handler)
+	defer mcpSrv.Close()
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`
+	req, err := http.NewRequest(http.MethodPost, mcpSrv.URL, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json", ct)
 	}
 }
 
