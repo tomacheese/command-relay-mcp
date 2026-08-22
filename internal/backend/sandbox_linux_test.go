@@ -191,6 +191,31 @@ func TestSandboxedBackend_DeniesSignalingHostProcesses(t *testing.T) {
 	}
 }
 
+// TestSandboxedBackend_CloseIOClosesStdin covers CloseIO for the
+// sandboxed backend: unlike the plain Linux backend, a backgrounded
+// descendant can't outlive the immediate child here (it dies with the
+// whole PID namespace when the child, its PID 1, exits), so the
+// regression this method exists for is stdin's fd otherwise never
+// closing once Wait no longer force-closes it via cmd.Wait.
+func TestSandboxedBackend_CloseIOClosesStdin(t *testing.T) {
+	helper := buildTestSandboxHelper(t)
+	b := NewSandboxedBackend(helper, []string{"/bin/bash", "-lc"})
+
+	h, err := b.Start(StartOptions{Command: "true"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if res := h.Wait(); res.Err != nil {
+		t.Fatalf("Wait: %v", res.Err)
+	}
+
+	h.CloseIO()
+
+	if _, err := h.Stdin().Write([]byte("x")); err == nil {
+		t.Fatal("Stdin write succeeded after CloseIO, want the pipe closed")
+	}
+}
+
 // TestSandboxedBackend_UserCommandExit111IsNotMisreportedAsSetupFailure
 // covers that SandboxSetupFailedExitCode (111) is an ordinary,
 // unreserved exit code many programs can legitimately return.

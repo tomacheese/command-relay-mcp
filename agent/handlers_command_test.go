@@ -214,6 +214,7 @@ func (alwaysSandboxSetupFailedHandle) Wait() backend.ExitResult {
 	return backend.ExitResult{SandboxSetupFailed: true}
 }
 func (alwaysSandboxSetupFailedHandle) Terminate(graceMs int) error { return nil }
+func (alwaysSandboxSetupFailedHandle) CloseIO()                    {}
 
 // alwaysStartErrorBackend simulates the backend itself failing to spawn a
 // process at all (distinct from a sandbox setup failure inside an

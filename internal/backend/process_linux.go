@@ -66,16 +66,26 @@ func (h *linuxHandle) Stderr() io.Reader     { return h.stderr }
 func (h *linuxHandle) Stdin() io.WriteCloser { return h.stdin }
 
 func (h *linuxHandle) Wait() ExitResult {
-	err := h.cmd.Wait()
-	if err == nil {
-		return ExitResult{ExitCode: 0}
+	// Unlike cmd.Wait, Process.Wait never touches the pipes; CloseIO
+	// closes them.
+	state, err := h.cmd.Process.Wait()
+	if err != nil {
+		// Exit code unobservable (e.g. Agent killed, signal, etc.) — the
+		// caller must allow exit_code to stay unknown in that case.
+		return ExitResult{Err: fmt.Errorf("wait: %w", err)}
 	}
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		return ExitResult{ExitCode: exitErr.ExitCode()}
-	}
-	// Exit code unobservable (e.g. Agent killed, signal, etc.) — the
-	// caller must allow exit_code to stay unknown in that case.
-	return ExitResult{Err: fmt.Errorf("wait: %w", err)}
+	return ExitResult{ExitCode: state.ExitCode()}
+}
+
+func (h *linuxHandle) CloseIO() {
+	// cmd.Wait() used to close every pipe cmd.*Pipe() handed out,
+	// including the stdin write end; Process.Wait() closes none of them,
+	// so this must close all three or stdin leaks its fd until GC. Errors
+	// are ignored: a pipe already closing on process exit is expected,
+	// and there is no recovery action for a close failure either way.
+	_ = h.stdout.Close()
+	_ = h.stderr.Close()
+	_ = h.stdin.Close()
 }
 
 func (h *linuxHandle) Terminate(graceMs int) error {
