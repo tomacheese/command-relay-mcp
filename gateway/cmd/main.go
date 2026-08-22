@@ -29,7 +29,7 @@ func main() {
 	log.Print("gateway: MCP endpoint has NO AUTHENTICATION — do not expose it to an untrusted network")
 
 	agentSrv := &http.Server{Addr: cfg.AgentListenAddress, Handler: gateway.NewWSServer(reg, verify)}
-	mcpSrv := &http.Server{Addr: cfg.MCPListenAddress, Handler: gateway.NewMCPHTTPHandlerNoAuth(reg)}
+	mcpSrv := &http.Server{Addr: cfg.MCPListenAddress, Handler: gateway.NewMCPMux(reg)}
 
 	go func() {
 		<-ctx.Done()

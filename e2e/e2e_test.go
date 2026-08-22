@@ -38,13 +38,13 @@ func newHarness(t *testing.T) *harness {
 	wsSrv := httptest.NewServer(gateway.NewWSServer(reg, verify))
 	t.Cleanup(wsSrv.Close)
 
-	mcpSrv := httptest.NewServer(gateway.NewMCPHTTPHandlerNoAuth(reg))
+	mcpSrv := httptest.NewServer(gateway.NewMCPMux(reg))
 	t.Cleanup(mcpSrv.Close)
 
 	startTestAgent(t, deviceID, deviceSecret, "ws"+wsSrv.URL[len("http"):])
 	waitForRegistration(t, reg, deviceID)
 
-	return &harness{mcpClient: mcpSession(t, mcpSrv.URL)}
+	return &harness{mcpClient: mcpSession(t, mcpSrv.URL+"/mcp")}
 }
 
 var (
