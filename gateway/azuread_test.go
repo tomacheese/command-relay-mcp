@@ -8,8 +8,11 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -160,9 +163,9 @@ func TestAzureADVerifier_RejectsBadSignature(t *testing.T) {
 	}
 }
 
-// TestBuildAzureADAuthServerMetadataBody_AddsPKCESupportAndSelfIssuer
-// covers the rationale documented on NewAzureADAuthServerMetadataHandler.
-func TestBuildAzureADAuthServerMetadataBody_AddsPKCESupportAndSelfIssuer(t *testing.T) {
+// TestBuildAzureADAuthServerMetadataBody_RewritesEndpointsAndAddsPKCESupport
+// covers the rationale documented on NewAzureADOAuthHandlers.
+func TestBuildAzureADAuthServerMetadataBody_RewritesEndpointsAndAddsPKCESupport(t *testing.T) {
 	azureMetadata := map[string]any{
 		"issuer":                 testIssuer,
 		"authorization_endpoint": testIssuer + "/oauth2/v2.0/authorize",
@@ -185,11 +188,247 @@ func TestBuildAzureADAuthServerMetadataBody_AddsPKCESupportAndSelfIssuer(t *test
 	if !ok || len(methods) != 1 || methods[0] != "S256" {
 		t.Fatalf("code_challenge_methods_supported = %v, want [\"S256\"]", got["code_challenge_methods_supported"])
 	}
-	if got["authorization_endpoint"] != testIssuer+"/oauth2/v2.0/authorize" {
-		t.Fatalf("authorization_endpoint = %v, want Azure's real endpoint preserved", got["authorization_endpoint"])
+	if got["authorization_endpoint"] != "https://gateway.example.invalid"+OAuthAuthorizePath {
+		t.Fatalf("authorization_endpoint = %v, want the Gateway's own proxy route", got["authorization_endpoint"])
 	}
-	if got["token_endpoint"] != testIssuer+"/oauth2/v2.0/token" {
-		t.Fatalf("token_endpoint = %v, want Azure's real endpoint preserved", got["token_endpoint"])
+	if got["token_endpoint"] != "https://gateway.example.invalid"+OAuthTokenPath {
+		t.Fatalf("token_endpoint = %v, want the Gateway's own proxy route", got["token_endpoint"])
+	}
+}
+
+func TestAzureADOAuthEndpoints_RejectsMissingEndpoints(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata map[string]any
+	}{
+		{"missing authorization_endpoint", map[string]any{
+			"token_endpoint": testIssuer + "/oauth2/v2.0/token",
+		}},
+		{"missing token_endpoint", map[string]any{
+			"authorization_endpoint": testIssuer + "/oauth2/v2.0/authorize",
+		}},
+		{"empty authorization_endpoint", map[string]any{
+			"authorization_endpoint": "",
+			"token_endpoint":         testIssuer + "/oauth2/v2.0/token",
+		}},
+		{"wrong type", map[string]any{
+			"authorization_endpoint": 123,
+			"token_endpoint":         testIssuer + "/oauth2/v2.0/token",
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, _, err := azureADOAuthEndpoints(tt.metadata); err == nil {
+				t.Fatal("expected an error for a missing/invalid endpoint")
+			}
+		})
+	}
+}
+
+func TestAzureADOAuthEndpoints_AcceptsValidEndpoints(t *testing.T) {
+	authorize, token, err := azureADOAuthEndpoints(map[string]any{
+		"authorization_endpoint": testIssuer + "/oauth2/v2.0/authorize",
+		"token_endpoint":         testIssuer + "/oauth2/v2.0/token",
+	})
+	if err != nil {
+		t.Fatalf("azureADOAuthEndpoints: %v", err)
+	}
+	if authorize != testIssuer+"/oauth2/v2.0/authorize" || token != testIssuer+"/oauth2/v2.0/token" {
+		t.Fatalf("authorize = %q, token = %q, want the metadata's own values", authorize, token)
+	}
+}
+
+func TestOAuthAuthorizeProxy_StripsResourceAndPreservesParams(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"with resource", "resource=https://mcp.example.invalid/mcp&client_id=abc&redirect_uri=https://client.example.invalid/cb&response_type=code&state=xyz&scope=openid&code_challenge=chal&code_challenge_method=S256"},
+		{"without resource", "client_id=abc&redirect_uri=https://client.example.invalid/cb&response_type=code&state=xyz&scope=openid&code_challenge=chal&code_challenge_method=S256"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Fatalf("upstream should never be hit directly; got %s", r.URL)
+			}))
+			defer upstream.Close()
+
+			srv := httptest.NewServer(newOAuthAuthorizeProxy(upstream.URL + "/authorize"))
+			defer srv.Close()
+
+			client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			}}
+			resp, err := client.Get(srv.URL + "/oauth/authorize?" + tt.query)
+			if err != nil {
+				t.Fatalf("GET: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusFound {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusFound)
+			}
+			loc, err := url.Parse(resp.Header.Get("Location"))
+			if err != nil {
+				t.Fatalf("parse Location: %v", err)
+			}
+			if got := upstream.URL + loc.Path; got != upstream.URL+"/authorize" {
+				t.Fatalf("Location path = %q, want upstream authorize endpoint", got)
+			}
+			q := loc.Query()
+			if q.Has("resource") {
+				t.Fatalf("resource param leaked to upstream: %v", q)
+			}
+			for _, key := range []string{"client_id", "redirect_uri", "state", "scope", "code_challenge", "code_challenge_method"} {
+				want := (url.Values{"client_id": {"abc"}, "redirect_uri": {"https://client.example.invalid/cb"}, "state": {"xyz"}, "scope": {"openid"}, "code_challenge": {"chal"}, "code_challenge_method": {"S256"}})[key][0]
+				if got := q.Get(key); got != want {
+					t.Fatalf("%s = %q, want %q", key, got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestOAuthTokenProxy_StripsResourceAndRelaysUpstream(t *testing.T) {
+	tests := []struct {
+		name         string
+		form         url.Values
+		upstreamCode int
+		upstreamBody string
+	}{
+		{
+			name: "authorization_code success",
+			form: url.Values{
+				"grant_type":    {"authorization_code"},
+				"code":          {"auth-code"},
+				"client_id":     {"abc"},
+				"code_verifier": {"verifier"},
+				"redirect_uri":  {"https://client.example.invalid/cb"},
+				"resource":      {"https://mcp.example.invalid/mcp"},
+			},
+			upstreamCode: http.StatusOK,
+			upstreamBody: `{"access_token":"tok","token_type":"Bearer"}`,
+		},
+		{
+			name: "refresh_token no resource",
+			form: url.Values{
+				"grant_type":    {"refresh_token"},
+				"refresh_token": {"rt-1"},
+				"client_id":     {"abc"},
+			},
+			upstreamCode: http.StatusOK,
+			upstreamBody: `{"access_token":"tok2","token_type":"Bearer"}`,
+		},
+		{
+			name: "upstream error relayed",
+			form: url.Values{
+				"grant_type": {"authorization_code"},
+				"code":       {"bad-code"},
+				"client_id":  {"abc"},
+				"resource":   {"https://mcp.example.invalid/mcp"},
+			},
+			upstreamCode: http.StatusBadRequest,
+			upstreamBody: `{"error":"invalid_grant"}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotForm url.Values
+			var gotContentType string
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				gotForm, _ = url.ParseQuery(string(body))
+				gotContentType = r.Header.Get("Content-Type")
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.upstreamCode)
+				_, _ = w.Write([]byte(tt.upstreamBody))
+			}))
+			defer upstream.Close()
+
+			srv := httptest.NewServer(newOAuthTokenProxy(upstream.URL))
+			defer srv.Close()
+
+			resp, err := http.Post(srv.URL+"/oauth/token", "application/x-www-form-urlencoded", strings.NewReader(tt.form.Encode()))
+			if err != nil {
+				t.Fatalf("POST: %v", err)
+			}
+			defer resp.Body.Close()
+			respBody, _ := io.ReadAll(resp.Body)
+
+			if gotForm.Has("resource") {
+				t.Fatalf("resource param leaked to upstream: %v", gotForm)
+			}
+			for key, want := range tt.form {
+				if key == "resource" {
+					continue
+				}
+				if got := gotForm.Get(key); got != want[0] {
+					t.Fatalf("upstream field %s = %q, want %q", key, got, want[0])
+				}
+			}
+			if gotContentType != "application/x-www-form-urlencoded" {
+				t.Fatalf("upstream Content-Type = %q, want application/x-www-form-urlencoded", gotContentType)
+			}
+			if resp.StatusCode != tt.upstreamCode {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.upstreamCode)
+			}
+			if string(respBody) != tt.upstreamBody {
+				t.Fatalf("body = %q, want %q", respBody, tt.upstreamBody)
+			}
+		})
+	}
+}
+
+func TestOAuthTokenProxy_ForwardsAuthorizationHeader(t *testing.T) {
+	var gotAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"access_token":"tok"}`))
+	}))
+	defer upstream.Close()
+
+	srv := httptest.NewServer(newOAuthTokenProxy(upstream.URL))
+	defer srv.Close()
+
+	form := url.Values{"grant_type": {"authorization_code"}, "code": {"c"}}
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/oauth/token", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Basic Y2xpZW50OnNlY3JldA==")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if gotAuth != "Basic Y2xpZW50OnNlY3JldA==" {
+		t.Fatalf("upstream Authorization = %q, want the client's Basic header forwarded", gotAuth)
+	}
+}
+
+func TestOAuthTokenProxy_RejectsOversizedBody(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("upstream should never be reached for an oversized body")
+	}))
+	defer upstream.Close()
+
+	srv := httptest.NewServer(newOAuthTokenProxy(upstream.URL))
+	defer srv.Close()
+
+	oversized := strings.Repeat("a", maxOAuthTokenBody+1)
+	resp, err := http.Post(srv.URL+"/oauth/token", "application/x-www-form-urlencoded", strings.NewReader("code="+oversized))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
 	}
 }
 

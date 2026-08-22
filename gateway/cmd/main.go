@@ -50,17 +50,19 @@ func main() {
 		if err != nil {
 			log.Fatalf("gateway: invalid PUBLIC_MCP_URL: %v", err)
 		}
-		// authServerIssuer is this Gateway's own origin, not Azure's: the
-		// /.well-known/oauth-authorization-server handler below proxies
-		// Azure's real metadata from here (see NewAzureADAuthServerMetadataHandler).
+		// authServerIssuer is this Gateway's own origin, not Azure's. The
+		// metadata, authorize, and token handlers below all proxy Azure AD
+		// from here (see NewAzureADOAuthHandlers).
 		authServerIssuer := publicMCPURL.Scheme + "://" + publicMCPURL.Host
-		metadataHandler, err := gateway.NewAzureADAuthServerMetadataHandler(ctx, cfg.OAuthTenantID, authServerIssuer)
+		oauthHandlers, err := gateway.NewAzureADOAuthHandlers(ctx, cfg.OAuthTenantID, authServerIssuer)
 		if err != nil {
-			log.Fatalf("gateway: azure ad metadata proxy: %v", err)
+			log.Fatalf("gateway: azure ad oauth proxy: %v", err)
 		}
 		resourceMetadataURL := authServerIssuer + protectedResourceMetadataPath
 		mux.Handle("/mcp", gateway.NewMCPHTTPHandlerWithVerifier(reg, verifier, cfg.OAuthRequiredScopes, resourceMetadataURL))
-		mux.Handle("/.well-known/oauth-authorization-server", metadataHandler)
+		mux.Handle("/.well-known/oauth-authorization-server", oauthHandlers.Metadata)
+		mux.Handle(gateway.OAuthAuthorizePath, oauthHandlers.Authorize)
+		mux.Handle(gateway.OAuthTokenPath, oauthHandlers.Token)
 		scopesSupported := gateway.AzureDefaultScope(cfg.OAuthAudience)
 		mux.Handle(protectedResourceMetadataPath, auth.ProtectedResourceMetadataHandler(&oauthex.ProtectedResourceMetadata{
 			Resource:             cfg.PublicMCPURL,
