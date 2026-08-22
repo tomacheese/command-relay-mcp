@@ -17,9 +17,7 @@ import (
 var errProcessNotFound = errors.New("process_not_found")
 
 // pipeDrainGracePeriod bounds how long the exit-wait goroutine waits for
-// the stdout/stderr copies to finish on their own (normal EOF) after the
-// process has exited, before force-closing the pipes as a backstop
-// against a descendant still holding a pipe's write end open.
+// stdout/stderr to drain naturally before force-closing the pipes.
 const pipeDrainGracePeriod = 2 * time.Second
 
 // ProcessRecord is the Agent-side runtime object for one process,
@@ -130,9 +128,9 @@ func (m *Manager) Start(opts backend.StartOptions) (*ProcessRecord, error) {
 	copyWG.Add(2)
 	go func() {
 		defer copyWG.Done()
-		// os.ErrClosed is expected: the exit-wait goroutine below may
-		// force-close this pipe via CloseIO as a backstop, if a
-		// descendant still holds the pipe's write end open.
+		// os.ErrClosed is expected: the exit-wait goroutine below
+		// closes this pipe via CloseIO once the process exits, even
+		// if a descendant still holds the pipe's write end open.
 		if _, err := io.Copy(rec.Stdout, h.Stdout()); err != nil && !errors.Is(err, os.ErrClosed) {
 			log.Printf("agent: stdout copy for process %s (pid %d) failed: %v", rec.ID, rec.OSPID, err)
 		}
@@ -145,23 +143,24 @@ func (m *Manager) Start(opts backend.StartOptions) (*ProcessRecord, error) {
 	}()
 	go func() {
 		res := h.Wait()
-		// The process closing its own stdout/stderr fds on exit usually
-		// unblocks the copies above via a natural EOF almost
-		// immediately. Give them a grace period before force-closing via
-		// CloseIO, in case a descendant still holds a pipe's write end
-		// open — exitCode/done must never precede full Stdout/Stderr
-		// capture.
+		// exitCode/done must never precede full Stdout/Stderr capture,
+		// so wait for the copies to drain before proceeding.
 		drained := make(chan struct{})
 		go func() {
 			copyWG.Wait()
 			close(drained)
 		}()
+		timer := time.NewTimer(pipeDrainGracePeriod)
 		select {
 		case <-drained:
-		case <-time.After(pipeDrainGracePeriod):
-			h.CloseIO()
-			<-drained
+			timer.Stop()
+		case <-timer.C:
+			// A descendant still holds a pipe's write end open — force
+			// it closed instead of blocking indefinitely.
+			log.Printf("agent: process %s (pid %d) pipe drain grace period elapsed, force-closing io", rec.ID, rec.OSPID)
 		}
+		h.CloseIO()
+		<-drained
 		rec.mu.Lock()
 		if res.Err == nil {
 			ec := res.ExitCode
