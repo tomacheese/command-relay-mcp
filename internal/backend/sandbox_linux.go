@@ -159,10 +159,13 @@ func (h *sandboxedHandle) Stderr() io.Reader     { return h.stderr }
 func (h *sandboxedHandle) Stdin() io.WriteCloser { return h.stdin }
 
 func (h *sandboxedHandle) Wait() ExitResult {
-	err := h.cmd.Wait()
+	// Process.Wait, unlike cmd.Wait, never touches the Stdout()/Stderr()
+	// pipes — closing those is CloseIO's job, called only once reads are
+	// drained (or as a backstop).
+	state, err := h.cmd.Process.Wait()
 	// The write end is long closed by now — either by landlockExecMain
 	// exiting (failure path) or by the exec-time close-on-exec (success
-	// path) — so this never blocks beyond cmd.Wait() itself.
+	// path) — so this never blocks beyond Process.Wait() itself.
 	statusData, _ := io.ReadAll(h.statusR)
 	h.statusR.Close()
 	setupFailed := len(statusData) > 0
@@ -173,13 +176,15 @@ func (h *sandboxedHandle) Wait() ExitResult {
 		log.Printf("backend: failed to remove sandbox scratch dir %s: %v", h.scratchDir, err)
 	}
 
-	if err == nil {
-		return ExitResult{ExitCode: 0, SandboxSetupFailed: setupFailed}
+	if err != nil {
+		return ExitResult{Err: fmt.Errorf("wait: %w", err), SandboxSetupFailed: setupFailed}
 	}
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		return ExitResult{ExitCode: exitErr.ExitCode(), SandboxSetupFailed: setupFailed}
-	}
-	return ExitResult{Err: fmt.Errorf("wait: %w", err), SandboxSetupFailed: setupFailed}
+	return ExitResult{ExitCode: state.ExitCode(), SandboxSetupFailed: setupFailed}
+}
+
+func (h *sandboxedHandle) CloseIO() {
+	h.stdout.Close()
+	h.stderr.Close()
 }
 
 func (h *sandboxedHandle) Terminate(graceMs int) error {

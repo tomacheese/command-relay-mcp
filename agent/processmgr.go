@@ -16,6 +16,12 @@ import (
 
 var errProcessNotFound = errors.New("process_not_found")
 
+// pipeDrainGracePeriod bounds how long the exit-wait goroutine waits for
+// the stdout/stderr copies to finish on their own (normal EOF) after the
+// process has exited, before force-closing the pipes as a backstop
+// against a descendant still holding a pipe's write end open.
+const pipeDrainGracePeriod = 2 * time.Second
+
 // ProcessRecord is the Agent-side runtime object for one process,
 // keyed externally by the opaque ID, never the OS PID.
 type ProcessRecord struct {
@@ -124,9 +130,9 @@ func (m *Manager) Start(opts backend.StartOptions) (*ProcessRecord, error) {
 	copyWG.Add(2)
 	go func() {
 		defer copyWG.Done()
-		// os.ErrClosed is expected: the exit-wait goroutine below
-		// force-closes this pipe via Wait once the process exits, even
-		// if a descendant still holds the pipe's write end open.
+		// os.ErrClosed is expected: the exit-wait goroutine below may
+		// force-close this pipe via CloseIO as a backstop, if a
+		// descendant still holds the pipe's write end open.
 		if _, err := io.Copy(rec.Stdout, h.Stdout()); err != nil && !errors.Is(err, os.ErrClosed) {
 			log.Printf("agent: stdout copy for process %s (pid %d) failed: %v", rec.ID, rec.OSPID, err)
 		}
@@ -138,13 +144,24 @@ func (m *Manager) Start(opts backend.StartOptions) (*ProcessRecord, error) {
 		}
 	}()
 	go func() {
-		// Wait first: it force-closes the pipes above, unblocking their
-		// copies even if a descendant still holds a write end open.
-		// Waiting on copyWG before this would risk a permanent deadlock.
 		res := h.Wait()
-		// Only now are the copies above guaranteed to finish — block on
-		// them so exitCode/done never precede full Stdout/Stderr capture.
-		copyWG.Wait()
+		// The process closing its own stdout/stderr fds on exit usually
+		// unblocks the copies above via a natural EOF almost
+		// immediately. Give them a grace period before force-closing via
+		// CloseIO, in case a descendant still holds a pipe's write end
+		// open — exitCode/done must never precede full Stdout/Stderr
+		// capture.
+		drained := make(chan struct{})
+		go func() {
+			copyWG.Wait()
+			close(drained)
+		}()
+		select {
+		case <-drained:
+		case <-time.After(pipeDrainGracePeriod):
+			h.CloseIO()
+			<-drained
+		}
 		rec.mu.Lock()
 		if res.Err == nil {
 			ec := res.ExitCode

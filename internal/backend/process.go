@@ -38,12 +38,15 @@ type ProcessHandle interface {
 	Stderr() io.Reader
 	Stdin() io.WriteCloser
 	// Wait blocks until the process exits and returns its result. Safe
-	// to call from exactly one goroutine. Implementations may close the
-	// Stdout()/Stderr() pipes once the process exit is observed, so a
-	// caller reading them must fully drain both before calling Wait —
-	// or, if Wait is called first, treat os.ErrClosed from a still-open
-	// read as an expected side effect of that closure, not an error.
+	// to call from exactly one goroutine. It does not touch the
+	// Stdout()/Stderr() pipes, so a concurrent reader is never force-
+	// closed mid-read; call CloseIO once reads are drained, or as a
+	// backstop if a descendant still holds a pipe open.
 	Wait() ExitResult
+	// CloseIO closes the Stdout()/Stderr() pipes. A caller reading them
+	// must treat os.ErrClosed from a still-open read as an expected side
+	// effect of this call, not an error.
+	CloseIO()
 	// Terminate ends the whole process group: SIGTERM, wait up to
 	// graceMs, then SIGKILL if still alive.
 	Terminate(graceMs int) error

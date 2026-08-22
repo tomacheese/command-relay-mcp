@@ -48,9 +48,9 @@ func TestManager_StartTrackAndWait(t *testing.T) {
 // TestManager_ExitedDoesNotHangOnDescendantHoldingPipesOpen guards
 // against a deadlock regression: if a command backgrounds a descendant
 // that inherits stdout/stderr and outlives the immediate child, the
-// exit-wait goroutine must still reach rec.done via Wait force-closing
-// the pipes, rather than blocking forever waiting for the descendant to
-// close them on its own.
+// exit-wait goroutine must still reach rec.done via CloseIO force-closing
+// the pipes once pipeDrainGracePeriod elapses, rather than blocking
+// forever waiting for the descendant to close them on its own.
 func TestManager_ExitedDoesNotHangOnDescendantHoldingPipesOpen(t *testing.T) {
 	b := backend.NewLinuxBackend([]string{"/bin/bash", "-lc"})
 	m := NewManager(b, 4<<20, 4<<20, time.Hour)
@@ -60,7 +60,7 @@ func TestManager_ExitedDoesNotHangOnDescendantHoldingPipesOpen(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), pipeDrainGracePeriod+2*time.Second)
 	defer cancel()
 	exitCode, timedOut := rec.Wait(ctx)
 	if timedOut {
