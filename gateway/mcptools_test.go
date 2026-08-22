@@ -162,12 +162,9 @@ func TestMCPServer_AcceptsRequestWithNoCredentials(t *testing.T) {
 	}
 }
 
-// TestNewMCPMux_UnrelatedPathGets404 covers that a client probing an
-// unrelated well-known path (e.g. OAuth discovery) gets a plain 404,
-// not the MCP handler's own 400 "Mcp-Session-Id header required" —
-// some clients (e.g. an MCP tunnel client's OAuth-discovery probe)
-// treat that malformed-looking response as a discovery failure instead
-// of "no OAuth here".
+// TestNewMCPMux_UnrelatedPathGets404 verifies an unrelated well-known
+// path (e.g. OAuth discovery) gets a plain 404, not the MCP handler's
+// own 400.
 func TestNewMCPMux_UnrelatedPathGets404(t *testing.T) {
 	reg := NewRegistry()
 	mcpSrv := httptest.NewServer(NewMCPMux(reg))
