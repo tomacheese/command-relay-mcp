@@ -96,7 +96,13 @@ func NewMCPHTTPHandlerNoAuth(reg *Registry) http.Handler {
 	// This applies to every tool call, not only discovery. The Gateway's
 	// tools already return one final result instead of streaming
 	// interim progress, so no client-visible behavior is lost.
-	opts := &mcp.StreamableHTTPOptions{JSONResponse: true}
+	//
+	// Stateless: a non-stateless server can't advertise the 2026-07-28
+	// protocol in server/discover, so ChatGPT's discover-first client
+	// commits to the modern per-request flow and gets every following
+	// call rejected with 400. This also drops Mcp-Session-Id management
+	// entirely — see CommandExecToolParams.ClientContextID.
+	opts := &mcp.StreamableHTTPOptions{JSONResponse: true, Stateless: true}
 	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return server }, opts)
 }
 
@@ -118,13 +124,14 @@ type CommandExecToolParams struct {
 	Cwd       string            `json:"cwd,omitempty"`
 	Env       map[string]string `json:"env,omitempty"`
 	TimeoutMs int               `json:"timeout_ms,omitempty"`
+	// ClientContextID is opaque and caller-chosen: MCP Stateless mode
+	// (see NewMCPHTTPHandlerNoAuth) manages no session to derive it from,
+	// so only the client knows which calls belong together.
+	ClientContextID string `json:"client_context_id,omitempty"`
 }
 
 func (p CommandExecToolParams) toAgentParams(req *mcp.CallToolRequest) agent.CommandExecParams {
-	out := agent.CommandExecParams{Command: p.Command, Cwd: p.Cwd, Env: p.Env, TimeoutMs: p.TimeoutMs}
-	if req.Session != nil {
-		out.ClientContextID = req.Session.ID()
-	}
+	out := agent.CommandExecParams{Command: p.Command, Cwd: p.Cwd, Env: p.Env, TimeoutMs: p.TimeoutMs, ClientContextID: p.ClientContextID}
 	if req.Extra != nil && req.Extra.TokenInfo != nil {
 		out.ClientSubject = req.Extra.TokenInfo.UserID
 	}
@@ -166,13 +173,12 @@ type ProcessStartToolParams struct {
 	Command  string            `json:"command"`
 	Cwd      string            `json:"cwd,omitempty"`
 	Env      map[string]string `json:"env,omitempty"`
+	// ClientContextID: see CommandExecToolParams.ClientContextID.
+	ClientContextID string `json:"client_context_id,omitempty"`
 }
 
 func processStartParams(req *mcp.CallToolRequest, in ProcessStartToolParams) agent.ProcessStartParams {
-	out := agent.ProcessStartParams{Command: in.Command, Cwd: in.Cwd, Env: in.Env}
-	if req.Session != nil {
-		out.ClientContextID = req.Session.ID()
-	}
+	out := agent.ProcessStartParams{Command: in.Command, Cwd: in.Cwd, Env: in.Env, ClientContextID: in.ClientContextID}
 	if req.Extra != nil && req.Extra.TokenInfo != nil {
 		out.ClientSubject = req.Extra.TokenInfo.UserID
 	}
