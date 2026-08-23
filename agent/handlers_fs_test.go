@@ -178,3 +178,36 @@ func TestFileWrite_RejectsUnknownMode(t *testing.T) {
 		t.Fatalf("file should not have been created for a rejected mode: err=%v", err)
 	}
 }
+
+// TestFileRead_RejectsOversizedFileWithoutLoadingIt covers Issue #26:
+// file.read must reject a file larger than proto.MaxFileReadBytes with
+// ErrFileTooLarge, and must do so via a size check rather than loading
+// the file into memory first.
+func TestFileRead_RejectsOversizedFileWithoutLoadingIt(t *testing.T) {
+	h := &FileHandlers{}
+	path := filepath.Join(t.TempDir(), "big.bin")
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Sparse file: Truncate sets the logical size without allocating
+	// (or loading) proto.MaxFileReadBytes+1 bytes of real data, so this
+	// test stays fast and light on memory regardless of the outcome
+	// being verified.
+	if err := f.Truncate(proto.MaxFileReadBytes + 1); err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	readParams, _ := json.Marshal(FileReadParams{Path: path})
+	_, rpcErr := h.Read(context.Background(), readParams)
+	if rpcErr == nil {
+		t.Fatal("Read: want an error for an oversized file, got nil")
+	}
+	if rpcErr.Code != proto.ErrFileTooLarge {
+		t.Fatalf("rpcErr.Code = %q, want %q", rpcErr.Code, proto.ErrFileTooLarge)
+	}
+}
