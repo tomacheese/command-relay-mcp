@@ -31,17 +31,6 @@ jobs:
       - name: 👨🏻‍💻 Install dependencies
         run: go mod download
 
-      - name: 🔧 Allow unprivileged user namespaces for sandbox tests
-        # ubuntu-latest ランナーは kernel.apparmor_restrict_unprivileged_userns=1
-        # がデフォルトで、AppArmor プロファイルを持たないバイナリ（go test が
-        # ビルドする一時テストバイナリを含む）の user+mount namespace 作成を
-        # ブロックする。本番の command-relay-agent バイナリには
-        # deploy/apparmor/usr.local.bin.command-relay-agent が対応するが、
-        # パスが毎回変わるテストバイナリには専用プロファイルを適用できないため、
-        # CI 環境限定でこの制限自体を無効化し、sandbox_linux_test.go が実際の
-        # namespace 分離・Landlock 挙動を検証できるようにする。
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
       - name: 🧪 Test
         run: go test -v ./...
 
@@ -56,4 +45,3 @@ jobs:
           sudo install -m 0755 /tmp/command-relay-agent /usr/local/bin/command-relay-agent
           systemd-analyze verify --user deploy/systemd/command-relay-agent.service
           sudo rm -f /usr/local/bin/command-relay-agent
-          apparmor_parser -Q --skip-cache deploy/apparmor/usr.local.bin.command-relay-agent

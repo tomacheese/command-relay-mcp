@@ -7,7 +7,7 @@
 # graceful-shutdown code path (agent/cmd/main.go's TerminateAll).
 #
 # This is a user unit (~/.config/systemd/user/): the Agent's sandboxed
-# command_read backend creates unprivileged user+mount+PID namespaces
+# command_read backend creates unprivileged user+network namespaces
 # itself at runtime, so it needs no elevated systemd-level privileges —
 # running as the invoking user's own systemd instance is sufficient and
 # avoids the separate DynamicUser identity a system unit would need.
