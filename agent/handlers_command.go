@@ -117,8 +117,8 @@ func (h *CommandHandlers) Exec(ctx context.Context, raw json.RawMessage) (any, *
 		h.recordEndEventually(execID, rec)
 	}
 
-	stdout, _, _ := rec.Stdout.ReadFrom(0, 0)
-	stderr, _, _ := rec.Stderr.ReadFrom(0, 0)
+	stdout, _, _ := rec.Stdout.ReadFrom(0, proto.MaxCommandOutputBytes)
+	stderr, _, _ := rec.Stderr.ReadFrom(0, proto.MaxCommandOutputBytes)
 	return CommandExecResult{
 		ProcessID: rec.ID, OSPID: rec.OSPID,
 		Stdout: string(stdout), Stderr: string(stderr),
@@ -195,8 +195,8 @@ func (h *CommandHandlers) Read(ctx context.Context, raw json.RawMessage) (any, *
 		return nil, &proto.RPCError{Code: proto.ErrSandboxViolation, Message: "sandbox setup failed for this call"}
 	}
 
-	stdout, _, _ := rec.Stdout.ReadFrom(0, 0)
-	stderr, _, _ := rec.Stderr.ReadFrom(0, 0)
+	stdout, _, _ := rec.Stdout.ReadFrom(0, proto.MaxCommandOutputBytes)
+	stderr, _, _ := rec.Stderr.ReadFrom(0, proto.MaxCommandOutputBytes)
 	return CommandExecResult{
 		ProcessID: rec.ID, OSPID: rec.OSPID,
 		Stdout: string(stdout), Stderr: string(stderr),
