@@ -144,3 +144,42 @@ func TestHistoryStore_ListOrdersChronologicallyEvenWithZeroNanoseconds(t *testin
 		t.Fatalf("list = %+v, want [later, earlier] (DESC by started_at)", list)
 	}
 }
+
+// TestOpenHistoryStore_UsesSingleConnection covers Issue #27: the
+// underlying *sql.DB pool must be capped at one connection, so
+// SQLite's per-connection busy_timeout applies uniformly instead of
+// being silently absent on a pool-generated connection.
+func TestOpenHistoryStore_UsesSingleConnection(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "history.db")
+	store, err := OpenHistoryStore(dbPath)
+	if err != nil {
+		t.Fatalf("OpenHistoryStore: %v", err)
+	}
+	defer store.Close()
+
+	stats := store.db.Stats()
+	if stats.MaxOpenConnections != 1 {
+		t.Fatalf("MaxOpenConnections = %d, want 1", stats.MaxOpenConnections)
+	}
+}
+
+// TestOpenHistoryStore_BusyTimeoutIsSetOnTheConnection covers Issue
+// #27: busy_timeout must be applied via the connection's own DSN, not
+// a one-off db.Exec that only reaches whichever connection happened to
+// run it first.
+func TestOpenHistoryStore_BusyTimeoutIsSetOnTheConnection(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "history.db")
+	store, err := OpenHistoryStore(dbPath)
+	if err != nil {
+		t.Fatalf("OpenHistoryStore: %v", err)
+	}
+	defer store.Close()
+
+	var busyTimeoutMs int
+	if err := store.db.QueryRow("PRAGMA busy_timeout;").Scan(&busyTimeoutMs); err != nil {
+		t.Fatalf("query busy_timeout: %v", err)
+	}
+	if busyTimeoutMs != 5000 {
+		t.Fatalf("busy_timeout = %d, want 5000", busyTimeoutMs)
+	}
+}

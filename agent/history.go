@@ -70,18 +70,18 @@ type HistoryStore struct {
 const historyTimeLayout = "2006-01-02T15:04:05.000000000Z07:00"
 
 func OpenHistoryStore(path string) (*HistoryStore, error) {
-	db, err := sql.Open("sqlite", path)
+	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec("PRAGMA journal_mode=WAL;"); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if _, err := db.Exec("PRAGMA busy_timeout=5000;"); err != nil {
-		db.Close()
-		return nil, err
-	}
+	// A single connection avoids SQLITE_BUSY between writer goroutines
+	// entirely: SQLite's busy_timeout is per-connection, so a
+	// pool-generated connection beyond the first would not reliably
+	// inherit it, and History writes are short enough that they don't
+	// need write concurrency in the first place.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, err
