@@ -7,10 +7,21 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"command-relay-mcp/internal/proto"
 	"github.com/coder/websocket"
 )
+
+// pingInterval is how often readLoop pings the Agent while otherwise
+// idle. Infra between Agent and Gateway (reverse proxies, Cloudflare,
+// etc.) can silently close an idle connection without this.
+// Overridden by tests to a much shorter interval.
+var pingInterval = 30 * time.Second
+
+// pingTimeout bounds how long a single keepalive ping waits for its pong
+// before being treated as a failed connection. Overridden by tests.
+var pingTimeout = 10 * time.Second
 
 // AgentConn wraps one Agent's WebSocket connection and multiplexes
 // Gateway-initiated RPCs on it, correlated by request_id.
@@ -92,6 +103,9 @@ func (c *AgentConn) Call(ctx context.Context, method string, params any) (json.R
 // the read side of the connection until it errors or ctx is done.
 func (c *AgentConn) readLoop(ctx context.Context) error {
 	defer close(c.closed)
+	pingCtx, cancelPing := context.WithCancel(ctx)
+	defer cancelPing()
+	go c.pingLoop(pingCtx)
 	for {
 		_, data, err := c.ws.Read(ctx)
 		if err != nil {
@@ -107,6 +121,34 @@ func (c *AgentConn) readLoop(ctx context.Context) error {
 		c.mu.Unlock()
 		if ok {
 			ch <- &resp
+		}
+	}
+}
+
+// pingLoop periodically pings the Agent so idle infra between Agent and
+// Gateway doesn't silently close the connection (see readLoop). A failed
+// ping closes the connection immediately. This makes readLoop's blocked
+// ws.Read return, instead of hanging indefinitely on a transport that's
+// already dead.
+func (c *AgentConn) pingLoop(ctx context.Context) {
+	ticker := time.NewTicker(pingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
+			err := c.ws.Ping(pingCtx)
+			cancel()
+			if err != nil {
+				if ctx.Err() != nil {
+					return // readLoop is already shutting down for an unrelated reason
+				}
+				log.Printf("gateway: keepalive ping to device %q failed: %v", c.deviceID, err)
+				c.ws.CloseNow()
+				return
+			}
 		}
 	}
 }

@@ -8,12 +8,45 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"command-relay-mcp/internal/proto"
 	"github.com/coder/websocket"
 )
+
+// TestMain shortens the keepalive interval/timeout once, on the main
+// test goroutine, before any pingLoop goroutine exists. Every later read
+// of these package vars from a spawned pingLoop is then safely ordered
+// after this write, avoiding a data race against a per-test set/restore.
+func TestMain(m *testing.M) {
+	pingInterval = 20 * time.Millisecond
+	pingTimeout = 20 * time.Millisecond
+	os.Exit(m.Run())
+}
+
+// syncBuffer is a mutex-guarded bytes.Buffer. TestAgentConn_CallOnTransportLoss
+// captures log output while a keepalive pingLoop goroutine may still be
+// running in the background — TestMain's shortened pingInterval makes this
+// window reachable within the test. A plain bytes.Buffer would race between
+// that goroutine's log write and the test's own read of the buffer.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 // dialRegisteredDevice dials, hellos, and waits for registration,
 // returning the client-side connection so the test can control exactly
@@ -57,6 +90,18 @@ func TestAgentConn_CallOnCtxTimeoutReturnsTimeoutCode(t *testing.T) {
 	clientWS := dialRegisteredDevice(t, srv, reg, "device-timeout")
 	defer clientWS.CloseNow()
 	conn, _ := reg.Get("device-timeout")
+	// Keep reading in the background so the Gateway's keepalive pings get
+	// answered instead of tearing down the transport before the ctx
+	// deadline fires (TestMain's shortened pingInterval applies here too).
+	// CloseRead can't be used here since it closes the connection on any
+	// data frame, and the Gateway's dispatched request is one.
+	go func() {
+		for {
+			if _, _, err := clientWS.Read(context.Background()); err != nil {
+				return
+			}
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -150,7 +195,7 @@ func TestAgentConn_CallOnTransportLoss(t *testing.T) {
 			defer clientWS.CloseNow()
 			conn, _ := reg.Get("device-" + tc.method)
 
-			var logBuf bytes.Buffer
+			var logBuf syncBuffer
 			log.SetOutput(&logBuf)
 			defer log.SetOutput(os.Stderr)
 
@@ -186,4 +231,92 @@ func TestAgentConn_CallOnTransportLoss(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAgentConn_SendsKeepalivePingsWhileIdle covers that readLoop sends
+// periodic WebSocket pings even when no RPC traffic is flowing. Idle
+// infra between Agent and Gateway can otherwise silently close the
+// connection.
+func TestAgentConn_SendsKeepalivePingsWhileIdle(t *testing.T) {
+	reg := NewRegistry()
+	verify := func(secret string) bool { return secret == "s3cr3t" }
+	srv := httptest.NewServer(NewWSServer(reg, verify))
+	defer srv.Close()
+
+	pings := make(chan struct{}, 8)
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer dialCancel()
+	clientWS, _, err := websocket.Dial(dialCtx, "ws"+srv.URL[len("http"):], &websocket.DialOptions{
+		OnPingReceived: func(ctx context.Context, payload []byte) bool {
+			select {
+			case pings <- struct{}{}:
+			default:
+			}
+			return true
+		},
+	})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer clientWS.CloseNow()
+
+	hello := proto.Hello{Type: proto.TypeHello, DeviceID: "device-idle-ping", DeviceSecret: "s3cr3t", OS: "linux", Arch: "amd64"}
+	data, _ := json.Marshal(hello)
+	if err := clientWS.Write(dialCtx, websocket.MessageText, data); err != nil {
+		t.Fatalf("write hello: %v", err)
+	}
+	// No further RPC traffic — CloseRead pumps frames in the background
+	// so incoming pings are still processed while we otherwise stay idle.
+	clientWS.CloseRead(context.Background())
+
+	received := 0
+	timeout := time.After(2 * time.Second)
+	for received < 3 {
+		select {
+		case <-pings:
+			received++
+		case <-timeout:
+			t.Fatalf("received only %d keepalive pings in time, want at least 3", received)
+		}
+	}
+}
+
+// TestAgentConn_KeepaliveFailureDisconnectsDevice covers a keepalive
+// ping that never gets a pong: a "blackholed" connection, where ws.Read
+// alone would hang forever. This must force readLoop to return via its
+// own ping timeout, so the device is unregistered instead of lingering
+// forever as falsely "connected".
+func TestAgentConn_KeepaliveFailureDisconnectsDevice(t *testing.T) {
+	reg := NewRegistry()
+	verify := func(secret string) bool { return secret == "s3cr3t" }
+	srv := httptest.NewServer(NewWSServer(reg, verify))
+	defer srv.Close()
+
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer dialCancel()
+	clientWS, _, err := websocket.Dial(dialCtx, "ws"+srv.URL[len("http"):], &websocket.DialOptions{
+		OnPingReceived: func(ctx context.Context, payload []byte) bool {
+			return false // never send a pong — simulate a blackholed connection
+		},
+	})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer clientWS.CloseNow()
+
+	hello := proto.Hello{Type: proto.TypeHello, DeviceID: "device-keepalive-fail", DeviceSecret: "s3cr3t", OS: "linux", Arch: "amd64"}
+	data, _ := json.Marshal(hello)
+	if err := clientWS.Write(dialCtx, websocket.MessageText, data); err != nil {
+		t.Fatalf("write hello: %v", err)
+	}
+	clientWS.CloseRead(context.Background())
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := reg.Get("device-keepalive-fail"); !ok {
+			return // unregistered — readLoop returned after the keepalive timeout
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("device is still registered after 2s; a keepalive timeout should have disconnected it")
 }

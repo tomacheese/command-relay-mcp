@@ -5,12 +5,24 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"command-relay-mcp/internal/proto"
 	"github.com/coder/websocket"
 )
+
+// TestMain shortens the keepalive interval/timeout once, on the main
+// test goroutine, before any pingLoop goroutine exists. Every later read
+// of these package vars from a spawned pingLoop is then safely ordered
+// after this write, avoiding a data race against a per-test set/restore.
+func TestMain(m *testing.M) {
+	pingInterval = 20 * time.Millisecond
+	pingTimeout = 20 * time.Millisecond
+	os.Exit(m.Run())
+}
 
 // TestConnection_MultiplexesConcurrentRequests covers that multiple
 // RPCs must be multiplexed on one connection, so a slow handler in
@@ -147,5 +159,108 @@ func TestConnection_HandshakeAndRoundTrip(t *testing.T) {
 	case <-roundTripDone:
 	case <-time.After(3 * time.Second):
 		t.Fatal("handshake/round trip did not complete")
+	}
+}
+
+// TestConnection_SendsKeepalivePingsWhileIdle covers that runOnce sends
+// periodic WebSocket pings even when no RPC traffic is flowing. Idle
+// infra between Agent and Gateway (reverse proxies, Cloudflare, etc.)
+// can otherwise silently close the connection.
+func TestConnection_SendsKeepalivePingsWhileIdle(t *testing.T) {
+	pings := make(chan struct{}, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+			OnPingReceived: func(ctx context.Context, payload []byte) bool {
+				select {
+				case pings <- struct{}{}:
+				default:
+				}
+				return true
+			},
+		})
+		if err != nil {
+			t.Errorf("accept: %v", err)
+			return
+		}
+		defer c.CloseNow()
+		ctx := context.Background()
+		if _, _, err := c.Read(ctx); err != nil { // hello
+			t.Errorf("read hello: %v", err)
+			return
+		}
+		// No further RPC traffic — CloseRead pumps frames in the
+		// background so incoming pings are still processed while we
+		// otherwise stay idle, mirroring a real idle Gateway connection.
+		readCtx := c.CloseRead(context.Background())
+		<-readCtx.Done()
+	}))
+	defer srv.Close()
+
+	d := NewDispatcher()
+	cfg := Config{DeviceID: "pine", DeviceSecret: "s3cr3t", GatewayURL: "ws" + srv.URL[len("http"):]}
+	conn := NewConnection(cfg, d, proto.Capabilities{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go conn.Run(ctx)
+
+	received := 0
+	timeout := time.After(2 * time.Second)
+	for received < 3 {
+		select {
+		case <-pings:
+			received++
+		case <-timeout:
+			t.Fatalf("received only %d keepalive pings in time, want at least 3", received)
+		}
+	}
+}
+
+// TestConnection_KeepaliveFailureTriggersReconnect covers a keepalive
+// ping that never gets a pong: a "blackholed" connection, where ws.Read
+// alone would hang forever. This must force a reconnect via runOnce's
+// own ping timeout, rather than relying on the transport to notice.
+func TestConnection_KeepaliveFailureTriggersReconnect(t *testing.T) {
+	var connectCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+			OnPingReceived: func(ctx context.Context, payload []byte) bool {
+				return false // never send a pong — simulate a blackholed connection
+			},
+		})
+		if err != nil {
+			t.Errorf("accept: %v", err)
+			return
+		}
+		defer c.CloseNow()
+		ctx := context.Background()
+		if _, _, err := c.Read(ctx); err != nil { // hello
+			t.Errorf("read hello: %v", err)
+			return
+		}
+		connectCount.Add(1)
+		readCtx := c.CloseRead(context.Background())
+		<-readCtx.Done()
+	}))
+	defer srv.Close()
+
+	d := NewDispatcher()
+	cfg := Config{DeviceID: "pine", DeviceSecret: "s3cr3t", GatewayURL: "ws" + srv.URL[len("http"):]}
+	conn := NewConnection(cfg, d, proto.Capabilities{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go conn.Run(ctx)
+
+	deadline := time.After(3 * time.Second)
+	for {
+		if connectCount.Load() >= 2 {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("connectCount = %d after 3s, want >= 2 (a keepalive timeout should have forced a reconnect)", connectCount.Load())
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
