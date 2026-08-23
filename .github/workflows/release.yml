@@ -135,11 +135,6 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
-      - name: Allow unprivileged user namespaces for sandbox tests
-        # build.yml と同じ理由（AppArmor 未対応の一時テストバイナリを
-        # kernel.apparmor_restrict_unprivileged_userns=1 がブロックするため）。
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
       - name: Test
         run: go test -v ./...
 
