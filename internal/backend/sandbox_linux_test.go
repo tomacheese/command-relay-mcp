@@ -7,6 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -173,13 +176,10 @@ func TestSandboxedBackend_RemovesScratchDirAfterExit(t *testing.T) {
 	}
 }
 
-// TestSandboxedBackend_CanSignalHostProcesses documents an accepted
-// trade-off: without a PID namespace (CLONE_NEWPID), Landlock alone
-// does not restrict signal delivery, and the sandboxed child runs as
-// the same host UID as everything else the Agent started, so it can
-// kill(2) any of them. This is intentional — dropping CLONE_NEWPID and
-// CLONE_NEWNS is what keeps the sandbox usable on hosts that restrict
-// unprivileged user namespaces.
+// TestSandboxedBackend_CanSignalHostProcesses verifies the accepted
+// trade-off documented on SandboxedBackend.Start.
+// Without a PID namespace, the sandboxed command can signal other
+// host processes running as the same UID.
 func TestSandboxedBackend_CanSignalHostProcesses(t *testing.T) {
 	victim := exec.Command("sleep", "5")
 	if err := victim.Start(); err != nil {
@@ -202,6 +202,41 @@ func TestSandboxedBackend_CanSignalHostProcesses(t *testing.T) {
 	}
 	if res.ExitCode != 0 {
 		t.Fatal("sandboxed command could not signal a host process — expected the accepted trade-off (no PID namespace) to allow this")
+	}
+}
+
+// TestSandboxedBackend_DetachedDescendantSurvivesExit verifies the
+// second trade-off documented on SandboxedBackend.Start.
+// Without a PID namespace, a detached descendant spawned by the
+// sandboxed command outlives that command's own exit instead of
+// being killed with it.
+func TestSandboxedBackend_DetachedDescendantSurvivesExit(t *testing.T) {
+	helper := buildTestSandboxHelper(t)
+	b := NewSandboxedBackend(helper, []string{"/bin/bash", "-lc"})
+
+	// setsid detaches "sleep 5" into its own session before the
+	// immediate command echoes its PID and exits.
+	h, err := b.Start(StartOptions{Command: "setsid sleep 5 < /dev/null > /dev/null 2>&1 & echo $!"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	stdout, _ := io.ReadAll(h.Stdout())
+	res := h.Wait()
+	if res.Err != nil {
+		t.Fatalf("Wait: %v", res.Err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0 (stdout=%q)", res.ExitCode, stdout)
+	}
+
+	pid, err := strconv.Atoi(strings.TrimSpace(string(stdout)))
+	if err != nil {
+		t.Fatalf("parse descendant pid from stdout %q: %v", stdout, err)
+	}
+	defer syscall.Kill(pid, syscall.SIGKILL)
+
+	if err := syscall.Kill(pid, syscall.Signal(0)); err != nil {
+		t.Fatalf("detached descendant did not survive the sandboxed command's exit: %v", err)
 	}
 }
 
@@ -246,13 +281,14 @@ func TestSandboxedBackend_DeniesWriteToDevNullWithoutGrant(t *testing.T) {
 	}
 }
 
-// TestSandboxedBackend_PipelineProcessCanReadOwnProcSelf covers that
-// procps-family tools work for a non-PID-1 process inside the sandbox,
-// e.g. the second stage of a pipeline. The sandbox no longer creates a
-// PID namespace, so /proc always reflects the process's real (host)
-// PID — there is nothing left to break here, but this guards against a
-// future regression that reintroduces PID-namespace isolation without
-// also fixing /proc resolution.
+// TestSandboxedBackend_PipelineProcessCanReadOwnProcSelf covers
+// procps-family tools inside the sandbox.
+// They must work for a non-PID-1 process, e.g. the second stage of
+// a pipeline.
+// The sandbox creates no PID namespace, so /proc always reflects
+// the process's real host PID.
+// This guards against a future regression that reintroduces
+// PID-namespace isolation without also fixing /proc resolution.
 func TestSandboxedBackend_PipelineProcessCanReadOwnProcSelf(t *testing.T) {
 	helper := buildTestSandboxHelper(t)
 	b := NewSandboxedBackend(helper, []string{"/bin/bash", "-lc"})
@@ -276,12 +312,9 @@ func TestSandboxedBackend_PipelineProcessCanReadOwnProcSelf(t *testing.T) {
 }
 
 // TestSandboxedBackend_CloseIOClosesStdin covers CloseIO for the
-// sandboxed backend: the regression this method exists for is stdin's
-// fd otherwise never closing once Wait no longer force-closes it via
-// cmd.Wait. (The sandbox used to also create a PID namespace whose
-// death took every backgrounded descendant with it; that no longer
-// happens — see TestSandboxedBackend_CanSignalHostProcesses's trade-off
-// comment — but it doesn't change what this test itself checks.)
+// sandboxed backend.
+// The regression this method exists for is stdin's fd otherwise
+// never closing, since Wait no longer force-closes it via cmd.Wait.
 func TestSandboxedBackend_CloseIOClosesStdin(t *testing.T) {
 	helper := buildTestSandboxHelper(t)
 	b := NewSandboxedBackend(helper, []string{"/bin/bash", "-lc"})

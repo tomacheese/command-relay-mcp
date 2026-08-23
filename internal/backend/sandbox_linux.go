@@ -43,8 +43,7 @@ const statusPipeFD = 3
 // avoids the well-known hazards of calling unshare(CLONE_NEWUSER) from
 // inside an already-running, multi-threaded process (which the Go
 // runtime always is). The namespaces exist before the child's own
-// main() ever runs, and survive its later syscall.Exec by kernel
-// design.
+// main() ever runs, and survive its later syscall.Exec by kernel design.
 type SandboxedBackend struct {
 	agentBinary string
 	shell       []string
@@ -84,31 +83,38 @@ func (b *SandboxedBackend) Start(opts StartOptions) (ProcessHandle, error) {
 	}
 	cmd.Env = append(env, scratchDirEnvVar+"="+scratchDir)
 	// New process group (Terminate signals the whole tree) plus a new
-	// user+network namespace pair: the uid/gid mappings make the child
-	// see itself as the same user it already is, so this works without
-	// root.
+	// user+network namespace pair.
+	// The uid/gid mappings make the child see itself as the same user
+	// it already is, so this works without root.
 	//
 	// CLONE_NEWPID and CLONE_NEWNS (and the /proc remount they used to
 	// require) are deliberately not requested. Creating a user
-	// namespace already triggers userns_create, which on hosts that
-	// restrict unprivileged user namespaces (e.g. Ubuntu 24.04+'s
-	// kernel.apparmor_restrict_unprivileged_userns=1) forces this
-	// process onto a shared AppArmor profile that unconditionally
-	// denies the CAP_SYS_ADMIN the /proc remount needs, regardless of
-	// any profile this binary itself carries. Landlock's own
-	// restrictions need no such capability, so dropping the PID/mount
+	// namespace already triggers userns_create.
+	//
+	// Some hosts restrict unprivileged user namespaces (e.g. Ubuntu
+	// 24.04+'s kernel.apparmor_restrict_unprivileged_userns=1). On such
+	// hosts, userns_create forces this process onto a shared AppArmor
+	// profile.
+	//
+	// That profile applies regardless of any profile this binary
+	// itself carries.
+	// It unconditionally denies CAP_SYS_ADMIN, which the /proc remount
+	// needs.
+	// Landlock needs no such capability. Dropping the PID/mount
 	// namespaces keeps the sandbox working on those hosts.
 	//
 	// Trade-off accepted: Landlock alone does not restrict signal
-	// delivery, and same-UID kill(2) is otherwise unconditionally
-	// allowed by the kernel, so without CLONE_NEWPID the sandboxed
-	// command can see and signal any other host process running as the
-	// same UID. It also means a detached descendant the sandboxed
-	// command spawns (e.g. via setsid) is no longer force-killed by the
-	// kernel when the sandboxed command exits — previously that command
-	// was PID 1 of its own PID namespace, so the namespace's death took
-	// every descendant with it, including ones Terminate()'s process-
-	// group signal (-pgid) wouldn't reach.
+	// delivery.
+	// Same-UID kill(2) is otherwise unconditionally allowed by the
+	// kernel.
+	// Without CLONE_NEWPID, the sandboxed command can see and signal
+	// any other host process running as the same UID.
+	//
+	// A second trade-off: a detached descendant can now outlive
+	// the sandboxed command's own exit.
+	// Previously, that command was PID 1 of its own PID namespace.
+	// Its death therefore force-killed every descendant, including
+	// ones Terminate()'s process-group signal (-pgid) wouldn't reach.
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid:    true,
 		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET,
