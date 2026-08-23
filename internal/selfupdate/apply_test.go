@@ -4,6 +4,9 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -88,5 +91,16 @@ func TestReplaceBinary(t *testing.T) {
 	}
 	if len(entries) != 1 {
 		t.Errorf("dir entries = %v, want exactly the replaced binary", entries)
+	}
+}
+
+func TestDownloadAsset_HTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	if _, err := downloadAsset(context.Background(), srv.Client(), srv.URL); err == nil {
+		t.Error("downloadAsset: want error for non-200 status, got nil")
 	}
 }

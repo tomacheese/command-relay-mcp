@@ -109,6 +109,24 @@ func TestStart_NoOpWhenDisabledOrDev(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 }
 
+// TestStart_NonPositiveIntervalDoesNotPanic covers Interval <= 0
+// (e.g. AUTO_UPDATE_INTERVAL=0 or a negative duration): time.NewTicker
+// panics on a non-positive duration, which would otherwise crash the
+// whole Agent process since Start's loop runs in an unrecovered
+// goroutine.
+func TestStart_NonPositiveIntervalDoesNotPanic(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"tag_name":"v1.0.0","assets":[]}`))
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	Start(ctx, Options{Enabled: true, CurrentVersion: "1.0.0", Interval: 0, ReleasesAPIURL: srv.URL})
+	time.Sleep(20 * time.Millisecond)
+}
+
 // checksumsFileFor builds a GoReleaser-style checksums.txt entry for
 // archiveData under the given asset name.
 func checksumsFileFor(t *testing.T, archiveData []byte, assetName string) []byte {

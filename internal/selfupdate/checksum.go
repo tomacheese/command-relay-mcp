@@ -20,9 +20,9 @@ func verifySHA256(data []byte, checksumsText, assetName string) error {
 			continue
 		}
 		if fields[0] != got {
-			return fmt.Errorf("selfupdate: checksum mismatch for %s: got %s, want %s", assetName, got, fields[0])
+			return fmt.Errorf("selfupdate: checksum mismatch for %q: got %s, want %s", assetName, got, fields[0])
 		}
 		return nil
 	}
-	return fmt.Errorf("selfupdate: no checksum entry found for %s", assetName)
+	return fmt.Errorf("selfupdate: no checksum entry found for %q", assetName)
 }

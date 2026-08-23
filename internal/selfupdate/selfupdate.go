@@ -5,9 +5,21 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"command-relay-mcp/internal/version"
 )
 
 const releasesAPIURL = "https://api.github.com/repos/tomacheese/command-relay-mcp/releases/latest"
+
+// defaultInterval is used in place of a non-positive Options.Interval —
+// time.NewTicker panics on Interval <= 0, which would crash the whole
+// Agent process since this runs in an unrecovered goroutine.
+const defaultInterval = 6 * time.Hour
+
+// httpTimeout bounds every GitHub API/download request. Without it, a
+// stalled response hangs the check goroutine forever, silently skipping
+// every future scheduled check.
+const httpTimeout = 30 * time.Second
 
 // Options configures the self-update checker.
 type Options struct {
@@ -31,16 +43,21 @@ type Options struct {
 // once immediately and then every Interval until ctx is done. It returns
 // immediately; the loop (if any) runs in its own goroutine.
 func Start(ctx context.Context, opts Options) {
-	if !opts.Enabled || opts.CurrentVersion == "dev" {
+	if !opts.Enabled || opts.CurrentVersion == version.DevVersion {
 		return
 	}
 	client := opts.HTTPClient
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: httpTimeout}
 	}
 	apiURL := opts.ReleasesAPIURL
 	if apiURL == "" {
 		apiURL = releasesAPIURL
+	}
+	interval := opts.Interval
+	if interval <= 0 {
+		log.Printf("selfupdate: invalid interval %s, falling back to %s", interval, defaultInterval)
+		interval = defaultInterval
 	}
 
 	go func() {
@@ -51,7 +68,7 @@ func Start(ctx context.Context, opts Options) {
 		}
 		runCheck()
 
-		t := time.NewTicker(opts.Interval)
+		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
 			select {

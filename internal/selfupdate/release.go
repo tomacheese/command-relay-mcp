@@ -38,11 +38,9 @@ func updateNeeded(currentVersion, tagName string) bool {
 	return currentVersion != normalizeVersion(tagName)
 }
 
-// archiveAssetName returns the release archive filename .goreleaser.yaml
-// produces for goarch, matching archives.name_template
-// ("{{ .ProjectName }}_{{ title .Os }}_..." — title-cased OS, amd64
-// renamed to x86_64). Only the two goarch values the Agent is built for
-// are supported.
+// archiveAssetName returns the release archive filename .goreleaser.yaml's
+// archive template produces for goarch. Only the two goarch values the
+// Agent is built for are supported.
 func archiveAssetName(goarch string) (string, error) {
 	switch goarch {
 	case "amd64":
@@ -61,7 +59,7 @@ func selectAsset(rel *release, name string) (*asset, error) {
 			return &rel.Assets[i], nil
 		}
 	}
-	return nil, fmt.Errorf("selfupdate: release %s has no asset named %q", rel.TagName, name)
+	return nil, fmt.Errorf("selfupdate: release %q has no asset named %q", rel.TagName, name)
 }
 
 // selectChecksumsAsset finds the checksums file GoReleaser's default
@@ -74,7 +72,7 @@ func selectChecksumsAsset(rel *release) (*asset, error) {
 			return &rel.Assets[i], nil
 		}
 	}
-	return nil, fmt.Errorf("selfupdate: release %s has no checksums asset", rel.TagName)
+	return nil, fmt.Errorf("selfupdate: release %q has no checksums asset", rel.TagName)
 }
 
 // fetchLatestRelease calls the GitHub Releases "latest" endpoint at

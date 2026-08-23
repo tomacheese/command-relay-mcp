@@ -14,6 +14,12 @@ import (
 	"syscall"
 )
 
+// maxAssetBytes bounds every downloaded/decompressed self-update asset
+// (release archive, checksums.txt, extracted binary). A generous ceiling
+// for one Go binary, chosen to reject a decompression bomb or a stalled/
+// oversized response before it can exhaust memory.
+const maxAssetBytes = 100 << 20 // 100MiB
+
 // extractBinary reads a gzip-compressed tar archive and returns the
 // contents of the regular file named name at its root (GoReleaser's
 // archives.wrap_in_directory defaults to false, so the binary sits at
@@ -35,7 +41,10 @@ func extractBinary(tarGzData []byte, name string) ([]byte, error) {
 			return nil, fmt.Errorf("selfupdate: read tar: %w", err)
 		}
 		if hdr.Typeflag == tar.TypeReg && filepath.Base(hdr.Name) == name {
-			return io.ReadAll(tr)
+			if hdr.Size > maxAssetBytes {
+				return nil, fmt.Errorf("selfupdate: %q in archive exceeds %d byte limit", name, maxAssetBytes)
+			}
+			return io.ReadAll(io.LimitReader(tr, maxAssetBytes+1))
 		}
 	}
 	return nil, fmt.Errorf("selfupdate: %q not found in archive", name)
@@ -98,12 +107,16 @@ func downloadAsset(ctx context.Context, client *http.Client, url string) ([]byte
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("selfupdate: GET %s: unexpected status %d", url, resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAssetBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxAssetBytes {
+		return nil, fmt.Errorf("selfupdate: GET %s: response exceeds %d byte limit", url, maxAssetBytes)
+	}
+	return data, nil
 }
 
-// applyUpdate downloads rel's archive and checksums assets for the
-// running GOARCH, verifies the archive, replaces the running binary,
-// and re-execs into it.
 func applyUpdate(ctx context.Context, client *http.Client, rel *release) error {
 	archiveName, err := archiveAssetName(runtime.GOARCH)
 	if err != nil {
@@ -120,11 +133,11 @@ func applyUpdate(ctx context.Context, client *http.Client, rel *release) error {
 
 	archiveData, err := downloadAsset(ctx, client, archiveAsset.BrowserDownloadURL)
 	if err != nil {
-		return fmt.Errorf("selfupdate: download %s: %w", archiveAsset.Name, err)
+		return fmt.Errorf("selfupdate: download %q: %w", archiveAsset.Name, err)
 	}
 	checksumsData, err := downloadAsset(ctx, client, checksumsAsset.BrowserDownloadURL)
 	if err != nil {
-		return fmt.Errorf("selfupdate: download %s: %w", checksumsAsset.Name, err)
+		return fmt.Errorf("selfupdate: download %q: %w", checksumsAsset.Name, err)
 	}
 
 	if err := verifySHA256(archiveData, string(checksumsData), archiveAsset.Name); err != nil {
@@ -144,8 +157,14 @@ func applyUpdate(ctx context.Context, client *http.Client, rel *release) error {
 		return err
 	}
 
+	// If execSelf fails, destPath now holds the new binary but this
+	// process's in-memory CurrentVersion is unchanged, so the next check
+	// (Interval from now) will see the same update again and retry — this
+	// matches the package's log-and-defer error policy for every other
+	// applyUpdate failure; automatic backoff/rollback here is an explicit
+	// non-goal.
 	if err := execSelf(destPath, os.Args, os.Environ()); err != nil {
-		return fmt.Errorf("selfupdate: re-exec %s: %w", destPath, err)
+		return fmt.Errorf("selfupdate: re-exec %q: %w", destPath, err)
 	}
 	return nil
 }

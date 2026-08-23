@@ -49,8 +49,6 @@ func TestLoadConfig_ReadsOverridesFromEnv(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_AutoUpdateDefaults covers that auto-update is enabled
-// with a 6h interval by default.
 func TestLoadConfig_AutoUpdateDefaults(t *testing.T) {
 	for _, key := range []string{"AUTO_UPDATE_ENABLED", "AUTO_UPDATE_INTERVAL"} {
 		os.Unsetenv(key)
@@ -64,8 +62,6 @@ func TestLoadConfig_AutoUpdateDefaults(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_AutoUpdateOverrides covers that AUTO_UPDATE_ENABLED and
-// AUTO_UPDATE_INTERVAL are configurable via environment variables.
 func TestLoadConfig_AutoUpdateOverrides(t *testing.T) {
 	t.Setenv("AUTO_UPDATE_ENABLED", "false")
 	t.Setenv("AUTO_UPDATE_INTERVAL", "30m")
