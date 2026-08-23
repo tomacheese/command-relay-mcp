@@ -3,10 +3,12 @@ package agent
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log"
 	"time"
 
 	_ "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // ExecutionStart is the row written when a command/process begins
@@ -103,11 +105,41 @@ func (s *HistoryStore) RecordStart(e ExecutionStart) error {
 	return err
 }
 
+const (
+	// recordEndMaxRetries and recordEndRetryDelay bound RecordEnd's
+	// SQLITE_BUSY retry: busy_timeout (set via DSN in OpenHistoryStore)
+	// already blocks for up to 5s inside a single db.Exec call, so the
+	// extra retries only need to cover the rare case where that single
+	// wait still wasn't enough — 3 retries * 100ms keeps the worst-case
+	// added latency under a second rather than compounding into tens
+	// of seconds.
+	recordEndMaxRetries = 3
+	recordEndRetryDelay = 100 * time.Millisecond
+)
+
+// isSQLiteBusy reports whether err is SQLITE_BUSY (result code 5), the
+// only error RecordEnd retries — anything else (constraint violation,
+// I/O error, corruption) is returned to the caller immediately instead
+// of being silently retried away.
+func isSQLiteBusy(err error) bool {
+	var coded interface{ Code() int }
+	return errors.As(err, &coded) && coded.Code() == sqlite3.SQLITE_BUSY
+}
+
 func (s *HistoryStore) RecordEnd(executionID string, endedAt time.Time, exitCode *int) error {
-	_, err := s.db.Exec(
-		`UPDATE executions SET ended_at = ?, exit_code = ? WHERE execution_id = ?`,
-		endedAt.UTC().Format(historyTimeLayout), exitCode, executionID,
-	)
+	var err error
+	for attempt := 0; attempt <= recordEndMaxRetries; attempt++ {
+		_, err = s.db.Exec(
+			`UPDATE executions SET ended_at = ?, exit_code = ? WHERE execution_id = ?`,
+			endedAt.UTC().Format(historyTimeLayout), exitCode, executionID,
+		)
+		if err == nil || !isSQLiteBusy(err) {
+			return err
+		}
+		if attempt < recordEndMaxRetries {
+			time.Sleep(recordEndRetryDelay)
+		}
+	}
 	return err
 }
 
