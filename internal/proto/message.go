@@ -60,7 +60,29 @@ const (
 	ErrTransportLost    = "transport_lost"
 	ErrExecutionUnknown = "execution_unknown"
 	ErrInternal         = "internal_error"
+	// ErrFileTooLarge is returned by file.read when the target file's
+	// size exceeds MaxFileReadBytes; the file is never opened for
+	// reading in that case.
+	ErrFileTooLarge = "file_too_large"
 )
+
+// MaxRPCMessageBytes is the maximum size of a single WebSocket message
+// (request or response) between Agent and Gateway, applied via
+// (*websocket.Conn).SetReadLimit on both ends. It must stay well above
+// every application-level size cap below, since JSON string-escaping
+// can inflate a byte stream by up to ~6x in the worst case (every byte
+// a control character).
+const MaxRPCMessageBytes int64 = 32 << 20 // 32 MiB
+
+// MaxCommandOutputBytes caps stdout/stderr returned by command.exec,
+// command.read, and process.read per stream. Larger output must be
+// retrieved by paging through process.start + process.read instead.
+const MaxCommandOutputBytes = 2 << 20 // 2 MiB per stream
+
+// MaxFileReadBytes caps the raw (pre-base64) file size file.read will
+// return in one response; larger files are rejected with
+// ErrFileTooLarge instead of being partially or fully loaded.
+const MaxFileReadBytes int64 = 8 << 20 // 8 MiB
 
 // Capabilities mirrors the "capabilities" object of the hello message.
 type Capabilities struct {
