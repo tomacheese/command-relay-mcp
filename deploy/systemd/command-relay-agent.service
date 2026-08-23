@@ -5,6 +5,12 @@
 # `systemctl stop`/kill still takes down every process tree the Agent
 # started even if the Agent is SIGKILLed and never runs its own
 # graceful-shutdown code path (agent/cmd/main.go's TerminateAll).
+#
+# This is a user unit (~/.config/systemd/user/): the Agent's sandboxed
+# command_read backend creates unprivileged user+mount+PID namespaces
+# itself at runtime, so it needs no elevated systemd-level privileges —
+# running as the invoking user's own systemd instance is sufficient and
+# avoids the separate DynamicUser identity a system unit would need.
 [Unit]
 Description=Remote Commander Agent
 After=network-online.target
@@ -21,10 +27,9 @@ TimeoutStopSec=30
 Environment=DEVICE_ID=
 Environment=DEVICE_SECRET=
 Environment=GATEWAY_URL=
-Environment=HISTORY_DB_PATH=/var/lib/command-relay-agent/history.db
+Environment=HISTORY_DB_PATH=%S/command-relay-agent/history.db
 
-DynamicUser=yes
 StateDirectory=command-relay-agent
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
