@@ -14,6 +14,16 @@ import (
 	"github.com/coder/websocket"
 )
 
+// pingInterval is how often runOnce pings the Gateway while otherwise
+// idle, so infra between Agent and Gateway (reverse proxies, Cloudflare,
+// etc.) doesn't silently close the connection on its own idle timeout.
+// Overridden by tests to a much shorter interval.
+var pingInterval = 30 * time.Second
+
+// pingTimeout bounds how long a single keepalive ping waits for its pong
+// before being treated as a failed connection. Overridden by tests.
+var pingTimeout = 10 * time.Second
+
 type Connection struct {
 	cfg          Config
 	dispatcher   *Dispatcher
@@ -81,6 +91,10 @@ func (c *Connection) runOnce(ctx context.Context) error {
 	}
 	log.Printf("agent: connected to gateway %s", c.cfg.GatewayURL)
 
+	pingCtx, cancelPing := context.WithCancel(ctx)
+	defer cancelPing()
+	go c.pingLoop(pingCtx, ws)
+
 	// Multiple RPCs are multiplexed on this one connection, so a slow
 	// handler (e.g. command.exec/command.read/process.wait blocking for
 	// up to their own timeout) must never stall dispatch of other
@@ -124,5 +138,30 @@ func (c *Connection) runOnce(ctx context.Context) error {
 				ws.CloseNow()
 			}
 		}(req)
+	}
+}
+
+// pingLoop periodically pings the Gateway so idle infra between Agent
+// and Gateway doesn't silently close the connection (see runOnce). A
+// failed ping closes the connection immediately so runOnce's blocked
+// ws.Read returns and Run reconnects, instead of waiting for the read
+// to hang indefinitely on a transport that's already dead.
+func (c *Connection) pingLoop(ctx context.Context, ws *websocket.Conn) {
+	ticker := time.NewTicker(pingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
+			err := ws.Ping(pingCtx)
+			cancel()
+			if err != nil {
+				log.Printf("agent: keepalive ping failed: %v", err)
+				ws.CloseNow()
+				return
+			}
+		}
 	}
 }
