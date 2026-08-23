@@ -112,13 +112,12 @@ func main() {
 	}
 }
 
-// landlockExecMain isolates mount propagation and remounts /proc for
-// this process's own PID namespace, then applies a strict,
-// non-BestEffort Landlock ruleset — read-only over the whole filesystem
-// except a private per-invocation scratch directory — then execs the
-// real command, replacing this process. It never returns on success; on
-// any setup failure it exits with backend.SandboxSetupFailedExitCode
-// instead of falling through to running the command unsandboxed.
+// landlockExecMain applies a strict, non-BestEffort Landlock ruleset —
+// read-only over the whole filesystem except a private per-invocation
+// scratch directory — then execs the real command, replacing this
+// process. It never returns on success; on any setup failure it exits
+// with backend.SandboxSetupFailedExitCode instead of falling through to
+// running the command unsandboxed.
 //
 // The exit code alone cannot signal "setup failed" to the parent. A
 // successful syscall.Exec fully replaces this process image with the
@@ -150,22 +149,6 @@ func landlockExecMain(execArgv []string) {
 	}
 	os.Setenv("TMPDIR", scratchDir)
 	os.Setenv("HOME", scratchDir)
-
-	// SandboxedBackend's CLONE_NEWNS gave this process its own mount
-	// namespace, but the mount table it started with is still a copy of
-	// the host's — including a shared-propagation flag that would
-	// otherwise leak the following mount/remount back to the host. Make
-	// it private first, then remount /proc so it reflects this
-	// process's own PID namespace: left as the inherited host /proc,
-	// procps-family tools (ps, etc.) fail to resolve their own PID for
-	// any command that isn't PID 1 of the namespace (e.g. anything past
-	// the first stage of a pipeline).
-	if err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
-		fail()
-	}
-	if err := syscall.Mount("proc", "/proc", "proc", 0, ""); err != nil {
-		fail()
-	}
 
 	// Strict mode only: BestEffort() would silently downgrade protection
 	// on partial kernel support, which is forbidden for the same reason

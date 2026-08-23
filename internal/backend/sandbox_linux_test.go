@@ -56,12 +56,6 @@ func main() {
 		fail()
 	}
 	os.Setenv("TMPDIR", scratchDir)
-	if err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
-		fail()
-	}
-	if err := syscall.Mount("proc", "/proc", "proc", 0, ""); err != nil {
-		fail()
-	}
 	if err := landlock.V4.RestrictPaths(%s); err != nil {
 		fail()
 	}
@@ -179,12 +173,14 @@ func TestSandboxedBackend_RemovesScratchDirAfterExit(t *testing.T) {
 	}
 }
 
-// TestSandboxedBackend_DeniesSignalingHostProcesses covers "host
-// process mutation denied": Landlock alone does not restrict signal
-// delivery, and the sandboxed child otherwise runs as the same host
-// UID as everything else the Agent started, so without a
-// PID namespace it could kill(2) any of them.
-func TestSandboxedBackend_DeniesSignalingHostProcesses(t *testing.T) {
+// TestSandboxedBackend_CanSignalHostProcesses documents an accepted
+// trade-off: without a PID namespace (CLONE_NEWPID), Landlock alone
+// does not restrict signal delivery, and the sandboxed child runs as
+// the same host UID as everything else the Agent started, so it can
+// kill(2) any of them. This is intentional — dropping CLONE_NEWPID and
+// CLONE_NEWNS is what keeps the sandbox usable on hosts that restrict
+// unprivileged user namespaces.
+func TestSandboxedBackend_CanSignalHostProcesses(t *testing.T) {
 	victim := exec.Command("sleep", "5")
 	if err := victim.Start(); err != nil {
 		t.Fatalf("start victim: %v", err)
@@ -204,8 +200,8 @@ func TestSandboxedBackend_DeniesSignalingHostProcesses(t *testing.T) {
 	if res.SandboxSetupFailed {
 		t.Fatal("sandbox setup itself failed")
 	}
-	if res.ExitCode == 0 {
-		t.Fatal("sandboxed command could signal a host process — PID namespace isolation not enforced")
+	if res.ExitCode != 0 {
+		t.Fatal("sandboxed command could not signal a host process — expected the accepted trade-off (no PID namespace) to allow this")
 	}
 }
 
@@ -252,7 +248,11 @@ func TestSandboxedBackend_DeniesWriteToDevNullWithoutGrant(t *testing.T) {
 
 // TestSandboxedBackend_PipelineProcessCanReadOwnProcSelf covers that
 // procps-family tools work for a non-PID-1 process inside the sandbox,
-// e.g. the second stage of a pipeline.
+// e.g. the second stage of a pipeline. The sandbox no longer creates a
+// PID namespace, so /proc always reflects the process's real (host)
+// PID — there is nothing left to break here, but this guards against a
+// future regression that reintroduces PID-namespace isolation without
+// also fixing /proc resolution.
 func TestSandboxedBackend_PipelineProcessCanReadOwnProcSelf(t *testing.T) {
 	helper := buildTestSandboxHelper(t)
 	b := NewSandboxedBackend(helper, []string{"/bin/bash", "-lc"})
@@ -276,11 +276,12 @@ func TestSandboxedBackend_PipelineProcessCanReadOwnProcSelf(t *testing.T) {
 }
 
 // TestSandboxedBackend_CloseIOClosesStdin covers CloseIO for the
-// sandboxed backend: unlike the plain Linux backend, a backgrounded
-// descendant can't outlive the immediate child here (it dies with the
-// whole PID namespace when the child, its PID 1, exits), so the
-// regression this method exists for is stdin's fd otherwise never
-// closing once Wait no longer force-closes it via cmd.Wait.
+// sandboxed backend: the regression this method exists for is stdin's
+// fd otherwise never closing once Wait no longer force-closes it via
+// cmd.Wait. (The sandbox used to also create a PID namespace whose
+// death took every backgrounded descendant with it; that no longer
+// happens — see TestSandboxedBackend_CanSignalHostProcesses's trade-off
+// comment — but it doesn't change what this test itself checks.)
 func TestSandboxedBackend_CloseIOClosesStdin(t *testing.T) {
 	helper := buildTestSandboxHelper(t)
 	b := NewSandboxedBackend(helper, []string{"/bin/bash", "-lc"})

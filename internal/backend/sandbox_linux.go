@@ -37,13 +37,14 @@ const statusPipeFD = 3
 // short-lived re-exec target may ever call the Landlock API — never
 // this long-running backend's own process.
 //
-// The child's own user, network, PID, and mount namespaces are created
-// here, at process-creation time, via SysProcAttr.Cloneflags — not by
-// the child calling unshare(2) on itself after it starts. Doing it this
-// way avoids the well-known hazards of calling unshare(CLONE_NEWUSER)
-// from inside an already-running, multi-threaded process (which the Go
+// The child's own user and network namespaces are created here, at
+// process-creation time, via SysProcAttr.Cloneflags — not by the child
+// calling unshare(2) on itself after it starts. Doing it this way
+// avoids the well-known hazards of calling unshare(CLONE_NEWUSER) from
+// inside an already-running, multi-threaded process (which the Go
 // runtime always is). The namespaces exist before the child's own
-// main() ever runs, and survive its later syscall.Exec by kernel design.
+// main() ever runs, and survive its later syscall.Exec by kernel
+// design.
 type SandboxedBackend struct {
 	agentBinary string
 	shell       []string
@@ -82,22 +83,35 @@ func (b *SandboxedBackend) Start(opts StartOptions) (ProcessHandle, error) {
 		env = append(env, k+"="+v)
 	}
 	cmd.Env = append(env, scratchDirEnvVar+"="+scratchDir)
-	// New process group (Terminate signals the whole tree) plus new
-	// user+network+PID+mount namespaces ("host process mutation denied"):
-	// the uid/gid mappings make the child see itself as the same user it
-	// already is, so this works without root. Landlock alone does not
-	// restrict signal delivery, and same-UID kill(2) is otherwise
-	// unconditionally allowed by the kernel — CLONE_NEWPID makes every
-	// host process invisible to (and therefore unaddressable by) the
-	// sandboxed command, regardless of UID. CLONE_NEWNS is required for
-	// landlockExecMain to remount /proc against this new PID namespace —
-	// without it, procps-family tools (ps, etc.) still see the host's
-	// /proc and fail to resolve their own PID once they're not PID 1 of
-	// the namespace anymore (e.g. any command past the first in a
-	// pipeline).
+	// New process group (Terminate signals the whole tree) plus a new
+	// user+network namespace pair: the uid/gid mappings make the child
+	// see itself as the same user it already is, so this works without
+	// root.
+	//
+	// CLONE_NEWPID and CLONE_NEWNS (and the /proc remount they used to
+	// require) are deliberately not requested. Creating a user
+	// namespace already triggers userns_create, which on hosts that
+	// restrict unprivileged user namespaces (e.g. Ubuntu 24.04+'s
+	// kernel.apparmor_restrict_unprivileged_userns=1) forces this
+	// process onto a shared AppArmor profile that unconditionally
+	// denies the CAP_SYS_ADMIN the /proc remount needs, regardless of
+	// any profile this binary itself carries. Landlock's own
+	// restrictions need no such capability, so dropping the PID/mount
+	// namespaces keeps the sandbox working on those hosts.
+	//
+	// Trade-off accepted: Landlock alone does not restrict signal
+	// delivery, and same-UID kill(2) is otherwise unconditionally
+	// allowed by the kernel, so without CLONE_NEWPID the sandboxed
+	// command can see and signal any other host process running as the
+	// same UID. It also means a detached descendant the sandboxed
+	// command spawns (e.g. via setsid) is no longer force-killed by the
+	// kernel when the sandboxed command exits — previously that command
+	// was PID 1 of its own PID namespace, so the namespace's death took
+	// every descendant with it, including ones Terminate()'s process-
+	// group signal (-pgid) wouldn't reach.
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid:    true,
-		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
+		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET,
 		UidMappings: []syscall.SysProcIDMap{
 			{ContainerID: 0, HostID: os.Getuid(), Size: 1},
 		},
