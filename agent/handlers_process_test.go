@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -409,4 +410,34 @@ func mustMarshal(t *testing.T, v any) json.RawMessage {
 		t.Fatalf("Marshal: %v", err)
 	}
 	return data
+}
+
+// TestProcessRead_ClampsMaxBytesToServerCap verifies that process.read's
+// caller-supplied max_bytes never exceeds proto.MaxCommandOutputBytes,
+// even when the caller asks for more (or asks for "unlimited" via 0).
+func TestProcessRead_ClampsMaxBytesToServerCap(t *testing.T) {
+	h := newTestProcessHandlers(t)
+	overBy := 1024
+	cmd := "head -c " + strconv.Itoa(proto.MaxCommandOutputBytes+overBy) + " /dev/zero | tr '\\0' 'a'"
+	startParams, _ := json.Marshal(ProcessStartParams{Command: cmd})
+	startResultAny, rpcErr := h.Start(context.Background(), startParams)
+	if rpcErr != nil {
+		t.Fatalf("Start: %+v", rpcErr)
+	}
+	startResult := startResultAny.(ProcessStartResult)
+
+	waitParams, _ := json.Marshal(ProcessWaitParams{ProcessID: startResult.ProcessID, TimeoutMs: 5000})
+	if _, rpcErr := h.Wait(context.Background(), waitParams); rpcErr != nil {
+		t.Fatalf("Wait: %+v", rpcErr)
+	}
+
+	readParams, _ := json.Marshal(ProcessReadParams{ProcessID: startResult.ProcessID, MaxBytes: proto.MaxCommandOutputBytes + overBy})
+	result, rpcErr := h.Read(context.Background(), readParams)
+	if rpcErr != nil {
+		t.Fatalf("Read: %+v", rpcErr)
+	}
+	res := result.(ProcessReadResult)
+	if len(res.Stdout) != proto.MaxCommandOutputBytes {
+		t.Fatalf("len(Stdout) = %d, want %d (server cap should win over the caller's larger max_bytes)", len(res.Stdout), proto.MaxCommandOutputBytes)
+	}
 }

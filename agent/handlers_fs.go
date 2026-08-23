@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,6 +74,13 @@ func (h *FileHandlers) Read(ctx context.Context, raw json.RawMessage) (any, *pro
 	path, rpcErr := validatePath(p.Path)
 	if rpcErr != nil {
 		return nil, rpcErr
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, osErrorToRPCError(err)
+	}
+	if info.Size() > proto.MaxFileReadBytes {
+		return nil, &proto.RPCError{Code: proto.ErrFileTooLarge, Message: fmt.Sprintf("file size %d exceeds the %d byte limit", info.Size(), proto.MaxFileReadBytes)}
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

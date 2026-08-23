@@ -76,6 +76,7 @@ func (c *Connection) runOnce(ctx context.Context) error {
 		return err
 	}
 	defer ws.CloseNow()
+	ws.SetReadLimit(proto.MaxRPCMessageBytes)
 
 	hello := proto.Hello{
 		Type: proto.TypeHello, DeviceID: c.cfg.DeviceID, DeviceSecret: c.cfg.DeviceSecret,

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -275,5 +276,32 @@ func TestCommandRead_LogsSandboxFailure(t *testing.T) {
 	}
 	if !strings.Contains(logBuf.String(), "sandbox failure") {
 		t.Fatalf("log output = %q, want it to mention \"sandbox failure\"", logBuf.String())
+	}
+}
+
+// TestCommandExec_CapsStdoutAtMaxCommandOutputBytes verifies that
+// command.exec does not return unbounded stdout — output beyond
+// proto.MaxCommandOutputBytes is capped rather than returned in full.
+func TestCommandExec_CapsStdoutAtMaxCommandOutputBytes(t *testing.T) {
+	h := newTestCommandHandlers(t)
+	overBy := 1024
+	// /dev/zero piped through tr avoids relying on a specific shell
+	// builtin's own output-size limits.
+	cmd := "head -c " + strconv.Itoa(proto.MaxCommandOutputBytes+overBy) + " /dev/zero | tr '\\0' 'a'"
+	params, _ := json.Marshal(CommandExecParams{Command: cmd, TimeoutMs: 5000})
+
+	result, rpcErr := h.Exec(context.Background(), params)
+	if rpcErr != nil {
+		t.Fatalf("rpcErr: %+v", rpcErr)
+	}
+	res := result.(CommandExecResult)
+	if len(res.Stdout) != proto.MaxCommandOutputBytes {
+		t.Fatalf("len(Stdout) = %d, want %d", len(res.Stdout), proto.MaxCommandOutputBytes)
+	}
+	if !res.StdoutTruncated {
+		t.Fatal("StdoutTruncated = false, want true since stdout exceeded the cap")
+	}
+	if res.StderrTruncated {
+		t.Fatal("StderrTruncated = true, want false since stderr produced no output")
 	}
 }

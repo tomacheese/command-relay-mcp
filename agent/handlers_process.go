@@ -145,6 +145,13 @@ func (h *ProcessHandlers) Start(ctx context.Context, raw json.RawMessage) (any, 
 	return ProcessStartResult{ProcessID: rec.ID, OSPID: rec.OSPID}, nil
 }
 
+func clampMaxBytes(requested int) int {
+	if requested <= 0 || requested > proto.MaxCommandOutputBytes {
+		return proto.MaxCommandOutputBytes
+	}
+	return requested
+}
+
 // Read implements process.read: pull-only, offset-based.
 func (h *ProcessHandlers) Read(ctx context.Context, raw json.RawMessage) (any, *proto.RPCError) {
 	var p ProcessReadParams
@@ -155,8 +162,9 @@ func (h *ProcessHandlers) Read(ctx context.Context, raw json.RawMessage) (any, *
 	if !ok {
 		return nil, notFound("process_id not found: " + p.ProcessID)
 	}
-	stdout, nextOut, truncOut := rec.Stdout.ReadFrom(p.StdoutOffset, p.MaxBytes)
-	stderr, nextErr, truncErr := rec.Stderr.ReadFrom(p.StderrOffset, p.MaxBytes)
+	maxBytes := clampMaxBytes(p.MaxBytes)
+	stdout, nextOut, truncOut := rec.Stdout.ReadFrom(p.StdoutOffset, maxBytes)
+	stderr, nextErr, truncErr := rec.Stderr.ReadFrom(p.StderrOffset, maxBytes)
 	return ProcessReadResult{
 		Stdout: string(stdout), Stderr: string(stderr),
 		NextStdoutOffset: nextOut, NextStderrOffset: nextErr,

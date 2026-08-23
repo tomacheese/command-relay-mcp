@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -262,5 +263,70 @@ func TestConnection_KeepaliveFailureTriggersReconnect(t *testing.T) {
 			t.Fatalf("connectCount = %d after 3s, want >= 2 (a keepalive timeout should have forced a reconnect)", connectCount.Load())
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+}
+
+// TestConnection_LargeResponseDoesNotBreakConnection verifies that a
+// WebSocket message larger than coder/websocket's 32KiB default read
+// limit does not close the connection, once SetReadLimit is applied
+// after Dial.
+func TestConnection_LargeResponseDoesNotBreakConnection(t *testing.T) {
+	const bigParamsLen = 64 * 1024 // well above the 32,768-byte default
+	roundTripDone := make(chan struct{})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Errorf("accept: %v", err)
+			return
+		}
+		defer c.CloseNow()
+		ctx := context.Background()
+
+		if _, _, err := c.Read(ctx); err != nil { // hello
+			t.Errorf("read hello: %v", err)
+			return
+		}
+
+		req := proto.Request{
+			Type: proto.TypeRequest, RequestID: "gw-1", Method: "big",
+			Params: json.RawMessage(`"` + strings.Repeat("x", bigParamsLen) + `"`),
+		}
+		reqData, _ := json.Marshal(req)
+		if err := c.Write(ctx, websocket.MessageText, reqData); err != nil {
+			t.Errorf("write large request: %v", err)
+			return
+		}
+
+		_, respData, err := c.Read(ctx)
+		if err != nil {
+			t.Errorf("read response: %v", err)
+			return
+		}
+		var resp proto.Response
+		if err := json.Unmarshal(respData, &resp); err != nil || resp.RequestID != "gw-1" {
+			t.Errorf("bad response: %v %+v", err, resp)
+			return
+		}
+		close(roundTripDone)
+	}))
+	defer srv.Close()
+
+	d := NewDispatcher()
+	d.Handle("big", func(ctx context.Context, params json.RawMessage) (any, *proto.RPCError) {
+		return struct{}{}, nil
+	})
+
+	cfg := Config{DeviceID: "pine", DeviceSecret: "s3cr3t", GatewayURL: "ws" + srv.URL[len("http"):]}
+	conn := NewConnection(cfg, d, proto.Capabilities{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go conn.Run(ctx)
+	defer cancel()
+
+	select {
+	case <-roundTripDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("large request/response round trip did not complete — did the default 32KiB read limit close the connection?")
 	}
 }

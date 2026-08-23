@@ -3,10 +3,12 @@ package agent
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log"
 	"time"
 
 	_ "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // ExecutionStart is the row written when a command/process begins
@@ -70,16 +72,15 @@ type HistoryStore struct {
 const historyTimeLayout = "2006-01-02T15:04:05.000000000Z07:00"
 
 func OpenHistoryStore(path string) (*HistoryStore, error) {
-	db, err := sql.Open("sqlite", path)
+	// busy_timeout is passed via the DSN rather than a one-off db.Exec:
+	// modernc.org/sqlite applies _pragma query params to every new
+	// physical connection as it opens, so this stays in effect
+	// regardless of how many connections the pool creates — unlike a
+	// single db.Exec("PRAGMA busy_timeout=...") call, which only
+	// reaches whichever connection happened to run it.
+	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, err
-	}
-	if _, err := db.Exec("PRAGMA journal_mode=WAL;"); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if _, err := db.Exec("PRAGMA busy_timeout=5000;"); err != nil {
-		db.Close()
 		return nil, err
 	}
 	if _, err := db.Exec(schema); err != nil {
@@ -103,11 +104,43 @@ func (s *HistoryStore) RecordStart(e ExecutionStart) error {
 	return err
 }
 
+const (
+	// recordEndMaxRetries and recordEndRetryDelay bound RecordEnd's
+	// SQLITE_BUSY retry to a small, fixed ceiling on top of the
+	// busy_timeout already applied per db.Exec call, rather than
+	// letting repeated retries compound into an unbounded wait.
+	recordEndMaxRetries = 3
+	recordEndRetryDelay = 100 * time.Millisecond
+)
+
+// isSQLiteBusy reports whether err is SQLITE_BUSY or one of its
+// extended result codes (SQLITE_BUSY_RECOVERY, SQLITE_BUSY_SNAPSHOT,
+// SQLITE_BUSY_TIMEOUT) — modernc.org/sqlite always enables extended
+// result codes, so a busy condition under WAL mode or a busy_timeout
+// expiry is reported unmasked and must be masked back to its primary
+// code before comparison. This is the only error RecordEnd retries —
+// anything else (constraint violation, I/O error, corruption) is
+// returned to the caller immediately instead of being silently
+// retried away.
+func isSQLiteBusy(err error) bool {
+	var coded interface{ Code() int }
+	return errors.As(err, &coded) && coded.Code()&0xff == sqlite3.SQLITE_BUSY
+}
+
 func (s *HistoryStore) RecordEnd(executionID string, endedAt time.Time, exitCode *int) error {
-	_, err := s.db.Exec(
-		`UPDATE executions SET ended_at = ?, exit_code = ? WHERE execution_id = ?`,
-		endedAt.UTC().Format(historyTimeLayout), exitCode, executionID,
-	)
+	var err error
+	for attempt := 0; attempt <= recordEndMaxRetries; attempt++ {
+		_, err = s.db.Exec(
+			`UPDATE executions SET ended_at = ?, exit_code = ? WHERE execution_id = ?`,
+			endedAt.UTC().Format(historyTimeLayout), exitCode, executionID,
+		)
+		if err == nil || !isSQLiteBusy(err) {
+			return err
+		}
+		if attempt < recordEndMaxRetries {
+			time.Sleep(recordEndRetryDelay)
+		}
+	}
 	return err
 }
 

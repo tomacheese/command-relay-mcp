@@ -1,7 +1,10 @@
 package agent
 
 import (
+	"errors"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -142,5 +145,125 @@ func TestHistoryStore_ListOrdersChronologicallyEvenWithZeroNanoseconds(t *testin
 	}
 	if len(list) != 2 || list[0].ExecutionID != "later" || list[1].ExecutionID != "earlier" {
 		t.Fatalf("list = %+v, want [later, earlier] (DESC by started_at)", list)
+	}
+}
+
+// TestOpenHistoryStore_BusyTimeoutIsSetOnEveryConnection verifies that
+// busy_timeout is applied via each connection's own DSN, not a one-off
+// db.Exec that would only reach whichever connection happened to run
+// it first — checked across several concurrently-opened connections,
+// not just whichever one the pool happens to hand back first.
+func TestOpenHistoryStore_BusyTimeoutIsSetOnEveryConnection(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "history.db")
+	store, err := OpenHistoryStore(dbPath)
+	if err != nil {
+		t.Fatalf("OpenHistoryStore: %v", err)
+	}
+	defer store.Close()
+
+	const n = 5
+	var wg sync.WaitGroup
+	results := make([]int, n)
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = store.db.QueryRow("PRAGMA busy_timeout;").Scan(&results[i])
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("query busy_timeout on connection %d: %v", i, err)
+		}
+		if results[i] != 5000 {
+			t.Fatalf("busy_timeout on connection %d = %d, want 5000", i, results[i])
+		}
+	}
+}
+
+// fakeCodedError simulates a driver error implementing the same
+// interface modernc.org/sqlite's *sqlite.Error exposes (a Code()
+// method), without depending on being able to force a real SQLITE_BUSY
+// deterministically in a unit test.
+type fakeCodedError struct{ code int }
+
+func (e *fakeCodedError) Error() string { return fmt.Sprintf("fake sqlite error code %d", e.code) }
+func (e *fakeCodedError) Code() int     { return e.code }
+
+// TestIsSQLiteBusy_OnlyMatchesBusyCode covers the retry-safety
+// requirement: isSQLiteBusy must recognize SQLITE_BUSY under
+// modernc.org/sqlite's always-on extended result codes (a bare code and
+// an extended busy code alike), while not treating a non-busy error
+// (e.g. a constraint violation) as retryable.
+func TestIsSQLiteBusy_OnlyMatchesBusyCode(t *testing.T) {
+	const sqliteBusyCode = 5           // SQLITE_BUSY
+	const sqliteBusySnapshotCode = 517 // SQLITE_BUSY_SNAPSHOT, an extended code sharing primary code 5
+	const sqliteConstraintCode = 19    // SQLITE_CONSTRAINT, a representative non-busy code
+
+	if !isSQLiteBusy(&fakeCodedError{code: sqliteBusyCode}) {
+		t.Fatal("isSQLiteBusy(code=5) = false, want true")
+	}
+	if !isSQLiteBusy(&fakeCodedError{code: sqliteBusySnapshotCode}) {
+		t.Fatal("isSQLiteBusy(code=517, SQLITE_BUSY_SNAPSHOT) = false, want true")
+	}
+	if isSQLiteBusy(&fakeCodedError{code: sqliteConstraintCode}) {
+		t.Fatal("isSQLiteBusy(code=19) = true, want false")
+	}
+	if isSQLiteBusy(errors.New("some unrelated error")) {
+		t.Fatal("isSQLiteBusy(plain error) = true, want false")
+	}
+}
+
+// TestRecordEnd_ConcurrentWritesDoNotLeaveExecutionsUnfinished verifies
+// that many goroutines calling RecordStart then RecordEnd concurrently
+// against one HistoryStore all complete without an unrecovered
+// SQLITE_BUSY, leaving no execution with ended_at/exit_code still NULL.
+func TestRecordEnd_ConcurrentWritesDoNotLeaveExecutionsUnfinished(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "history.db")
+	store, err := OpenHistoryStore(dbPath)
+	if err != nil {
+		t.Fatalf("OpenHistoryStore: %v", err)
+	}
+	defer store.Close()
+
+	const n = 50
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			id := fmt.Sprintf("exec-%d", i)
+			start := ExecutionStart{ExecutionID: id, DeviceID: "pine", Mode: "write", Command: "echo hi", StartedAt: time.Now()}
+			if err := store.RecordStart(start); err != nil {
+				errs <- fmt.Errorf("RecordStart(%s): %w", id, err)
+				return
+			}
+			exitCode := 0
+			if err := store.RecordEnd(id, time.Now(), &exitCode); err != nil {
+				errs <- fmt.Errorf("RecordEnd(%s): %w", id, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+
+	list, err := store.List(n + 10)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != n {
+		t.Fatalf("len(list) = %d, want %d", len(list), n)
+	}
+	for _, e := range list {
+		if e.EndedAt == nil || e.ExitCode == nil {
+			t.Fatalf("execution %s left unfinished: ended_at=%v exit_code=%v", e.ExecutionID, e.EndedAt, e.ExitCode)
+		}
 	}
 }
