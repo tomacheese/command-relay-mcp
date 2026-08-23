@@ -412,10 +412,9 @@ func mustMarshal(t *testing.T, v any) json.RawMessage {
 	return data
 }
 
-// TestProcessRead_ClampsMaxBytesToServerCap covers Issue #26:
-// process.read's caller-supplied max_bytes must not exceed
-// proto.MaxCommandOutputBytes, even when the caller asks for more (or
-// asks for "unlimited" via 0).
+// TestProcessRead_ClampsMaxBytesToServerCap verifies that process.read's
+// caller-supplied max_bytes never exceeds proto.MaxCommandOutputBytes,
+// even when the caller asks for more (or asks for "unlimited" via 0).
 func TestProcessRead_ClampsMaxBytesToServerCap(t *testing.T) {
 	h := newTestProcessHandlers(t)
 	overBy := 1024
@@ -427,7 +426,6 @@ func TestProcessRead_ClampsMaxBytesToServerCap(t *testing.T) {
 	}
 	startResult := startResultAny.(ProcessStartResult)
 
-	// Wait for the process to finish producing output before reading.
 	waitParams, _ := json.Marshal(ProcessWaitParams{ProcessID: startResult.ProcessID, TimeoutMs: 5000})
 	if _, rpcErr := h.Wait(context.Background(), waitParams); rpcErr != nil {
 		t.Fatalf("Wait: %+v", rpcErr)

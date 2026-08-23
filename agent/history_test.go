@@ -148,11 +148,12 @@ func TestHistoryStore_ListOrdersChronologicallyEvenWithZeroNanoseconds(t *testin
 	}
 }
 
-// TestOpenHistoryStore_UsesSingleConnection covers Issue #27: the
-// underlying *sql.DB pool must be capped at one connection, so
-// SQLite's per-connection busy_timeout applies uniformly instead of
-// being silently absent on a pool-generated connection.
-func TestOpenHistoryStore_UsesSingleConnection(t *testing.T) {
+// TestOpenHistoryStore_BusyTimeoutIsSetOnEveryConnection verifies that
+// busy_timeout is applied via each connection's own DSN, not a one-off
+// db.Exec that would only reach whichever connection happened to run
+// it first — checked across several concurrently-opened connections,
+// not just whichever one the pool happens to hand back first.
+func TestOpenHistoryStore_BusyTimeoutIsSetOnEveryConnection(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "history.db")
 	store, err := OpenHistoryStore(dbPath)
 	if err != nil {
@@ -160,30 +161,26 @@ func TestOpenHistoryStore_UsesSingleConnection(t *testing.T) {
 	}
 	defer store.Close()
 
-	stats := store.db.Stats()
-	if stats.MaxOpenConnections != 1 {
-		t.Fatalf("MaxOpenConnections = %d, want 1", stats.MaxOpenConnections)
+	const n = 5
+	var wg sync.WaitGroup
+	results := make([]int, n)
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = store.db.QueryRow("PRAGMA busy_timeout;").Scan(&results[i])
+		}(i)
 	}
-}
+	wg.Wait()
 
-// TestOpenHistoryStore_BusyTimeoutIsSetOnTheConnection covers Issue
-// #27: busy_timeout must be applied via the connection's own DSN, not
-// a one-off db.Exec that only reaches whichever connection happened to
-// run it first.
-func TestOpenHistoryStore_BusyTimeoutIsSetOnTheConnection(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "history.db")
-	store, err := OpenHistoryStore(dbPath)
-	if err != nil {
-		t.Fatalf("OpenHistoryStore: %v", err)
-	}
-	defer store.Close()
-
-	var busyTimeoutMs int
-	if err := store.db.QueryRow("PRAGMA busy_timeout;").Scan(&busyTimeoutMs); err != nil {
-		t.Fatalf("query busy_timeout: %v", err)
-	}
-	if busyTimeoutMs != 5000 {
-		t.Fatalf("busy_timeout = %d, want 5000", busyTimeoutMs)
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("query busy_timeout on connection %d: %v", i, err)
+		}
+		if results[i] != 5000 {
+			t.Fatalf("busy_timeout on connection %d = %d, want 5000", i, results[i])
+		}
 	}
 }
 
@@ -196,15 +193,21 @@ type fakeCodedError struct{ code int }
 func (e *fakeCodedError) Error() string { return fmt.Sprintf("fake sqlite error code %d", e.code) }
 func (e *fakeCodedError) Code() int     { return e.code }
 
-// TestIsSQLiteBusy_OnlyMatchesBusyCode covers Issue #27's retry-safety
-// requirement: isSQLiteBusy must not treat a non-SQLITE_BUSY error
+// TestIsSQLiteBusy_OnlyMatchesBusyCode covers the retry-safety
+// requirement: isSQLiteBusy must recognize SQLITE_BUSY under
+// modernc.org/sqlite's always-on extended result codes (a bare code and
+// an extended busy code alike), while not treating a non-busy error
 // (e.g. a constraint violation) as retryable.
 func TestIsSQLiteBusy_OnlyMatchesBusyCode(t *testing.T) {
-	const sqliteBusyCode = 5        // matches the "(5)" in the Issue #27 log line
-	const sqliteConstraintCode = 19 // SQLITE_CONSTRAINT, picked as a representative non-busy code
+	const sqliteBusyCode = 5           // SQLITE_BUSY
+	const sqliteBusySnapshotCode = 517 // SQLITE_BUSY_SNAPSHOT, an extended code sharing primary code 5
+	const sqliteConstraintCode = 19    // SQLITE_CONSTRAINT, a representative non-busy code
 
 	if !isSQLiteBusy(&fakeCodedError{code: sqliteBusyCode}) {
 		t.Fatal("isSQLiteBusy(code=5) = false, want true")
+	}
+	if !isSQLiteBusy(&fakeCodedError{code: sqliteBusySnapshotCode}) {
+		t.Fatal("isSQLiteBusy(code=517, SQLITE_BUSY_SNAPSHOT) = false, want true")
 	}
 	if isSQLiteBusy(&fakeCodedError{code: sqliteConstraintCode}) {
 		t.Fatal("isSQLiteBusy(code=19) = true, want false")
@@ -214,11 +217,10 @@ func TestIsSQLiteBusy_OnlyMatchesBusyCode(t *testing.T) {
 	}
 }
 
-// TestRecordEnd_ConcurrentWritesDoNotLeaveExecutionsUnfinished covers
-// Issue #27's core symptom: many goroutines calling RecordStart then
-// RecordEnd concurrently against one HistoryStore must all complete
-// without an unrecovered SQLITE_BUSY, leaving no execution with
-// ended_at/exit_code still NULL.
+// TestRecordEnd_ConcurrentWritesDoNotLeaveExecutionsUnfinished verifies
+// that many goroutines calling RecordStart then RecordEnd concurrently
+// against one HistoryStore all complete without an unrecovered
+// SQLITE_BUSY, leaving no execution with ended_at/exit_code still NULL.
 func TestRecordEnd_ConcurrentWritesDoNotLeaveExecutionsUnfinished(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "history.db")
 	store, err := OpenHistoryStore(dbPath)

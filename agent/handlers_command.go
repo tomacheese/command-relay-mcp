@@ -38,6 +38,13 @@ type CommandExecResult struct {
 	// any other non-zero exit. Always false for command.exec, which
 	// never runs sandboxed.
 	SandboxViolation bool `json:"sandbox_violation,omitempty"`
+	// StdoutTruncated/StderrTruncated are set when the corresponding
+	// stream exceeded proto.MaxCommandOutputBytes and was cut off in
+	// this response — command.exec/command.read are one-shot with no
+	// paging, so this is the caller's only signal that output beyond
+	// the cap was discarded.
+	StdoutTruncated bool `json:"stdout_truncated,omitempty"`
+	StderrTruncated bool `json:"stderr_truncated,omitempty"`
 }
 
 const (
@@ -117,12 +124,14 @@ func (h *CommandHandlers) Exec(ctx context.Context, raw json.RawMessage) (any, *
 		h.recordEndEventually(execID, rec)
 	}
 
-	stdout, _, _ := rec.Stdout.ReadFrom(0, proto.MaxCommandOutputBytes)
-	stderr, _, _ := rec.Stderr.ReadFrom(0, proto.MaxCommandOutputBytes)
+	stdout, stdoutNext, _ := rec.Stdout.ReadFrom(0, proto.MaxCommandOutputBytes)
+	stderr, stderrNext, _ := rec.Stderr.ReadFrom(0, proto.MaxCommandOutputBytes)
 	return CommandExecResult{
 		ProcessID: rec.ID, OSPID: rec.OSPID,
 		Stdout: string(stdout), Stderr: string(stderr),
 		ExitCode: exitCode, TimedOut: timedOut,
+		StdoutTruncated: stdoutNext < rec.Stdout.Len(),
+		StderrTruncated: stderrNext < rec.Stderr.Len(),
 	}, nil
 }
 
@@ -195,8 +204,8 @@ func (h *CommandHandlers) Read(ctx context.Context, raw json.RawMessage) (any, *
 		return nil, &proto.RPCError{Code: proto.ErrSandboxViolation, Message: "sandbox setup failed for this call"}
 	}
 
-	stdout, _, _ := rec.Stdout.ReadFrom(0, proto.MaxCommandOutputBytes)
-	stderr, _, _ := rec.Stderr.ReadFrom(0, proto.MaxCommandOutputBytes)
+	stdout, stdoutNext, _ := rec.Stdout.ReadFrom(0, proto.MaxCommandOutputBytes)
+	stderr, stderrNext, _ := rec.Stderr.ReadFrom(0, proto.MaxCommandOutputBytes)
 	return CommandExecResult{
 		ProcessID: rec.ID, OSPID: rec.OSPID,
 		Stdout: string(stdout), Stderr: string(stderr),
@@ -205,5 +214,7 @@ func (h *CommandHandlers) Read(ctx context.Context, raw json.RawMessage) (any, *
 		// denied a mutation attempt exactly as intended — never true on
 		// timeout, since there is no exit code yet.
 		SandboxViolation: !timedOut && exitCode != nil && *exitCode != 0,
+		StdoutTruncated:  stdoutNext < rec.Stdout.Len(),
+		StderrTruncated:  stderrNext < rec.Stderr.Len(),
 	}, nil
 }

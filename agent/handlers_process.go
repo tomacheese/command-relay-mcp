@@ -145,10 +145,6 @@ func (h *ProcessHandlers) Start(ctx context.Context, raw json.RawMessage) (any, 
 	return ProcessStartResult{ProcessID: rec.ID, OSPID: rec.OSPID}, nil
 }
 
-// clampMaxBytes resolves a caller-supplied max_bytes (<= 0 meaning
-// "no limit") to an effective value no larger than
-// proto.MaxCommandOutputBytes, mirroring clampTimeoutMs's pattern for
-// timeout_ms in handlers_command.go.
 func clampMaxBytes(requested int) int {
 	if requested <= 0 || requested > proto.MaxCommandOutputBytes {
 		return proto.MaxCommandOutputBytes

@@ -24,9 +24,12 @@ func NewWSServer(reg *Registry, verify DeviceVerifier) http.Handler {
 			log.Printf("gateway: websocket accept failed: %v", err)
 			return
 		}
-		ws.SetReadLimit(proto.MaxRPCMessageBytes)
 		ctx := r.Context()
 
+		// The hello read stays under the library's small default read
+		// limit: it is the last message accepted before the device
+		// secret is verified, so widening it here would let an
+		// unauthenticated caller force a much larger allocation.
 		_, data, err := ws.Read(ctx)
 		if err != nil {
 			ws.Close(websocket.StatusProtocolError, "expected hello")
@@ -42,6 +45,7 @@ func NewWSServer(reg *Registry, verify DeviceVerifier) http.Handler {
 			ws.Close(websocket.StatusPolicyViolation, "invalid device credential")
 			return
 		}
+		ws.SetReadLimit(proto.MaxRPCMessageBytes)
 
 		conn := newAgentConn(ws, hello)
 		reg.Register(conn)

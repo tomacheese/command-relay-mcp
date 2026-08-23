@@ -279,8 +279,8 @@ func TestCommandRead_LogsSandboxFailure(t *testing.T) {
 	}
 }
 
-// TestCommandExec_CapsStdoutAtMaxCommandOutputBytes covers Issue #26:
-// command.exec must not return unbounded stdout — output beyond
+// TestCommandExec_CapsStdoutAtMaxCommandOutputBytes verifies that
+// command.exec does not return unbounded stdout — output beyond
 // proto.MaxCommandOutputBytes is capped rather than returned in full.
 func TestCommandExec_CapsStdoutAtMaxCommandOutputBytes(t *testing.T) {
 	h := newTestCommandHandlers(t)
@@ -297,5 +297,11 @@ func TestCommandExec_CapsStdoutAtMaxCommandOutputBytes(t *testing.T) {
 	res := result.(CommandExecResult)
 	if len(res.Stdout) != proto.MaxCommandOutputBytes {
 		t.Fatalf("len(Stdout) = %d, want %d", len(res.Stdout), proto.MaxCommandOutputBytes)
+	}
+	if !res.StdoutTruncated {
+		t.Fatal("StdoutTruncated = false, want true since stdout exceeded the cap")
+	}
+	if res.StderrTruncated {
+		t.Fatal("StderrTruncated = true, want false since stderr produced no output")
 	}
 }

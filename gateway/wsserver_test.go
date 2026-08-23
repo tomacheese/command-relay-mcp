@@ -113,10 +113,9 @@ func TestRegistry_CloseAllDropsRealConnectionsAndClearsTheRegistry(t *testing.T)
 	}
 }
 
-// TestWSServer_AcceptsLargeMessageFromAgent covers Issue #26: a
-// WebSocket message larger than coder/websocket's 32KiB default read
-// limit sent by the Agent must not close the connection, once
-// SetReadLimit is applied after Accept.
+// TestWSServer_AcceptsLargeMessageFromAgent verifies that a WebSocket
+// message larger than coder/websocket's 32KiB default read limit sent
+// by an already-authenticated Agent does not close the connection.
 func TestWSServer_AcceptsLargeMessageFromAgent(t *testing.T) {
 	const bigResultLen = 64 * 1024 // well above the 32,768-byte default
 	reg := NewRegistry()
@@ -165,5 +164,39 @@ func TestWSServer_AcceptsLargeMessageFromAgent(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("Call did not complete — did the default 32KiB read limit close the connection?")
+	}
+}
+
+// TestWSServer_RejectsOversizedPreAuthMessage verifies that the raised
+// SetReadLimit does not apply until after the device secret is
+// verified, so an unauthenticated client cannot force a large
+// allocation via an oversized hello message.
+func TestWSServer_RejectsOversizedPreAuthMessage(t *testing.T) {
+	const oversizedLen = 64 * 1024 // above the 32,768-byte default, below proto.MaxRPCMessageBytes
+	reg := NewRegistry()
+	verify := func(secret string) bool { return secret == "s3cr3t" }
+	srv := httptest.NewServer(NewWSServer(reg, verify))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, "ws"+srv.URL[len("http"):], nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer ws.CloseNow()
+
+	// An oversized hello can never unmarshal to a valid credential
+	// anyway, but what this test asserts is that the connection is
+	// closed for exceeding the pre-auth read limit rather than being
+	// buffered in full and only then rejected as bad JSON.
+	oversized := []byte(`{"type":"hello","device_secret":"` + strings.Repeat("x", oversizedLen) + `"}`)
+	ws.Write(ctx, websocket.MessageText, oversized)
+
+	if _, _, err := ws.Read(ctx); err == nil {
+		t.Fatal("expected the connection to be closed for an oversized pre-auth message")
+	}
+	if _, ok := reg.Get("pine"); ok {
+		t.Fatal("device should not be registered from an oversized, unverified hello")
 	}
 }

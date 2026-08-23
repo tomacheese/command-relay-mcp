@@ -179,10 +179,10 @@ func TestFileWrite_RejectsUnknownMode(t *testing.T) {
 	}
 }
 
-// TestFileRead_RejectsOversizedFileWithoutLoadingIt covers Issue #26:
-// file.read must reject a file larger than proto.MaxFileReadBytes with
-// ErrFileTooLarge, and must do so via a size check rather than loading
-// the file into memory first.
+// TestFileRead_RejectsOversizedFileWithoutLoadingIt verifies that
+// file.read rejects a file larger than proto.MaxFileReadBytes with
+// ErrFileTooLarge, via a size check rather than loading the file into
+// memory first.
 func TestFileRead_RejectsOversizedFileWithoutLoadingIt(t *testing.T) {
 	h := &FileHandlers{}
 	path := filepath.Join(t.TempDir(), "big.bin")

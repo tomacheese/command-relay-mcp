@@ -266,9 +266,9 @@ func TestConnection_KeepaliveFailureTriggersReconnect(t *testing.T) {
 	}
 }
 
-// TestConnection_LargeResponseDoesNotBreakConnection covers Issue #26:
-// a WebSocket message larger than coder/websocket's 32KiB default read
-// limit must not close the connection, once SetReadLimit is applied
+// TestConnection_LargeResponseDoesNotBreakConnection verifies that a
+// WebSocket message larger than coder/websocket's 32KiB default read
+// limit does not close the connection, once SetReadLimit is applied
 // after Dial.
 func TestConnection_LargeResponseDoesNotBreakConnection(t *testing.T) {
 	const bigParamsLen = 64 * 1024 // well above the 32,768-byte default
