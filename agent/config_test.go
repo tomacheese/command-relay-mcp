@@ -48,3 +48,33 @@ func TestLoadConfig_ReadsOverridesFromEnv(t *testing.T) {
 		t.Fatalf("HistoryRetention = %v, want 168h", cfg.HistoryRetention)
 	}
 }
+
+// TestLoadConfig_AutoUpdateDefaults covers that auto-update is enabled
+// with a 6h interval by default.
+func TestLoadConfig_AutoUpdateDefaults(t *testing.T) {
+	for _, key := range []string{"AUTO_UPDATE_ENABLED", "AUTO_UPDATE_INTERVAL"} {
+		os.Unsetenv(key)
+	}
+	cfg := LoadConfig()
+	if !cfg.AutoUpdateEnabled {
+		t.Error("AutoUpdateEnabled = false, want true (default)")
+	}
+	if cfg.AutoUpdateInterval != 6*time.Hour {
+		t.Fatalf("AutoUpdateInterval = %v, want 6h", cfg.AutoUpdateInterval)
+	}
+}
+
+// TestLoadConfig_AutoUpdateOverrides covers that AUTO_UPDATE_ENABLED and
+// AUTO_UPDATE_INTERVAL are configurable via environment variables.
+func TestLoadConfig_AutoUpdateOverrides(t *testing.T) {
+	t.Setenv("AUTO_UPDATE_ENABLED", "false")
+	t.Setenv("AUTO_UPDATE_INTERVAL", "30m")
+
+	cfg := LoadConfig()
+	if cfg.AutoUpdateEnabled {
+		t.Error("AutoUpdateEnabled = true, want false")
+	}
+	if cfg.AutoUpdateInterval != 30*time.Minute {
+		t.Fatalf("AutoUpdateInterval = %v, want 30m", cfg.AutoUpdateInterval)
+	}
+}

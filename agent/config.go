@@ -21,6 +21,8 @@ type Config struct {
 	FinishedProcessTTL time.Duration
 	HistoryRetention   time.Duration
 	AgentVersion       string
+	AutoUpdateEnabled  bool
+	AutoUpdateInterval time.Duration
 }
 
 // LoadConfig reads every Agent setting from the environment, applying
@@ -38,6 +40,8 @@ func LoadConfig() Config {
 		FinishedProcessTTL: envDurationOr("FINISHED_PROCESS_TTL", time.Hour),
 		HistoryRetention:   envDurationOr("HISTORY_RETENTION", 30*24*time.Hour),
 		AgentVersion:       version.Version,
+		AutoUpdateEnabled:  envBoolOr("AUTO_UPDATE_ENABLED", true),
+		AutoUpdateInterval: envDurationOr("AUTO_UPDATE_INTERVAL", 6*time.Hour),
 	}
 }
 
@@ -61,6 +65,17 @@ func envIntOr(key string, fallback int) int {
 			return n
 		} else {
 			log.Printf("agent: invalid value for %s=%q, using default %d: %v", key, v, fallback, err)
+		}
+	}
+	return fallback
+}
+
+func envBoolOr(key string, fallback bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		} else {
+			log.Printf("agent: invalid value for %s=%q, using default %t: %v", key, v, fallback, err)
 		}
 	}
 	return fallback
