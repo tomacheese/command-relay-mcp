@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -14,10 +15,23 @@ import (
 	"command-relay-mcp/agent"
 	"command-relay-mcp/internal/backend"
 	"command-relay-mcp/internal/proto"
+	"command-relay-mcp/internal/selfupdate"
+	"command-relay-mcp/internal/version"
 	"github.com/landlock-lsm/go-landlock/landlock"
 )
 
+// versionRequested reports whether args (os.Args) asked for --version.
+// Checked before the --landlock-exec branch so the two never collide.
+func versionRequested(args []string) bool {
+	return len(args) >= 2 && args[1] == "--version"
+}
+
 func main() {
+	if versionRequested(os.Args) {
+		fmt.Println(version.Version)
+		return
+	}
+
 	// Hidden self-re-exec target for command.read's sandbox. This must
 	// be the ONLY code path in this binary
 	// that ever calls the Landlock API: Landlock restrictions apply to
@@ -50,6 +64,11 @@ func main() {
 	defer cancel()
 	mgr.StartGC(ctx, time.Minute)
 	hist.StartGC(ctx, cfg.HistoryRetention, time.Hour)
+	selfupdate.Start(ctx, selfupdate.Options{
+		Enabled:        cfg.AutoUpdateEnabled,
+		Interval:       cfg.AutoUpdateInterval,
+		CurrentVersion: cfg.AgentVersion,
+	})
 
 	selfPath, err := os.Executable()
 	if err != nil {
