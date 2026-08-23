@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -109,5 +110,60 @@ func TestRegistry_CloseAllDropsRealConnectionsAndClearsTheRegistry(t *testing.T)
 	defer readCancel()
 	if _, _, err := ws.Read(readCtx); err == nil {
 		t.Fatal("expected the underlying connection to be closed by CloseAll")
+	}
+}
+
+// TestWSServer_AcceptsLargeMessageFromAgent covers Issue #26: a
+// WebSocket message larger than coder/websocket's 32KiB default read
+// limit sent by the Agent must not close the connection, once
+// SetReadLimit is applied after Accept.
+func TestWSServer_AcceptsLargeMessageFromAgent(t *testing.T) {
+	const bigResultLen = 64 * 1024 // well above the 32,768-byte default
+	reg := NewRegistry()
+	verify := func(secret string) bool { return secret == "s3cr3t" }
+	srv := httptest.NewServer(NewWSServer(reg, verify))
+	defer srv.Close()
+
+	ws := dialRegisteredDevice(t, srv, reg, "pine")
+	defer ws.CloseNow()
+
+	// readLoop is already running in the background as part of the HTTP
+	// handler NewWSServer registered for this connection (see
+	// NewWSServer's own conn.readLoop call) — starting a second one here
+	// would race two concurrent readers against the same *websocket.Conn.
+	conn, _ := reg.Get("pine")
+
+	callDone := make(chan error, 1)
+	go func() {
+		_, err := conn.Call(context.Background(), "big", struct{}{})
+		callDone <- err
+	}()
+
+	ctx := context.Background()
+	_, reqData, err := ws.Read(ctx)
+	if err != nil {
+		t.Fatalf("read request: %v", err)
+	}
+	var req proto.Request
+	if err := json.Unmarshal(reqData, &req); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+
+	resp := proto.Response{
+		Type: proto.TypeResponse, RequestID: req.RequestID,
+		Result: json.RawMessage(`"` + strings.Repeat("x", bigResultLen) + `"`),
+	}
+	respData, _ := json.Marshal(resp)
+	if err := ws.Write(ctx, websocket.MessageText, respData); err != nil {
+		t.Fatalf("write large response: %v", err)
+	}
+
+	select {
+	case err := <-callDone:
+		if err != nil {
+			t.Fatalf("Call returned an error — did the default 32KiB read limit close the connection? %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Call did not complete — did the default 32KiB read limit close the connection?")
 	}
 }

@@ -24,6 +24,7 @@ func NewWSServer(reg *Registry, verify DeviceVerifier) http.Handler {
 			log.Printf("gateway: websocket accept failed: %v", err)
 			return
 		}
+		ws.SetReadLimit(proto.MaxRPCMessageBytes)
 		ctx := r.Context()
 
 		_, data, err := ws.Read(ctx)
