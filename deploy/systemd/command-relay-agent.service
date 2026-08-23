@@ -15,8 +15,10 @@
 # ProtectHome=read-only; those are intentionally not replaced here,
 # since command_exec's whole purpose is running arbitrary commands
 # (including writes anywhere the invoking user can already write) —
-# NoNewPrivileges/PrivateTmp below are the hardening that doesn't
-# conflict with that.
+# NoNewPrivileges below is the hardening that doesn't conflict with that.
+#
+# PrivateTmp is deliberately NOT set (#19): it breaks command_read's
+# sandbox userns creation under kernel.apparmor_restrict_unprivileged_userns=1.
 [Unit]
 Description=Remote Commander Agent
 After=network-online.target
@@ -30,7 +32,6 @@ RestartSec=5
 KillMode=control-group
 TimeoutStopSec=30
 NoNewPrivileges=true
-PrivateTmp=true
 
 Environment=DEVICE_ID=
 Environment=DEVICE_SECRET=
