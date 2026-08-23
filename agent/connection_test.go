@@ -14,10 +14,10 @@ import (
 	"github.com/coder/websocket"
 )
 
-// TestMain shortens the keepalive interval/timeout once, on the main test
-// goroutine before any pingLoop goroutine exists, so every later read of
-// these package vars from a spawned pingLoop is safely ordered after this
-// write (avoiding a data race against per-test set/restore).
+// TestMain shortens the keepalive interval/timeout once, on the main
+// test goroutine, before any pingLoop goroutine exists. Every later read
+// of these package vars from a spawned pingLoop is then safely ordered
+// after this write, avoiding a data race against a per-test set/restore.
 func TestMain(m *testing.M) {
 	pingInterval = 20 * time.Millisecond
 	pingTimeout = 20 * time.Millisecond
@@ -163,9 +163,9 @@ func TestConnection_HandshakeAndRoundTrip(t *testing.T) {
 }
 
 // TestConnection_SendsKeepalivePingsWhileIdle covers that runOnce sends
-// periodic WebSocket pings even when no RPC traffic is flowing, so idle
+// periodic WebSocket pings even when no RPC traffic is flowing. Idle
 // infra between Agent and Gateway (reverse proxies, Cloudflare, etc.)
-// doesn't silently close the connection on its own idle timeout.
+// can otherwise silently close the connection.
 func TestConnection_SendsKeepalivePingsWhileIdle(t *testing.T) {
 	pings := make(chan struct{}, 8)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -216,11 +216,10 @@ func TestConnection_SendsKeepalivePingsWhileIdle(t *testing.T) {
 	}
 }
 
-// TestConnection_KeepaliveFailureTriggersReconnect covers that a
-// keepalive ping which never gets a pong (a "blackholed" connection,
-// where ws.Read alone would hang forever) forces a reconnect via
-// runOnce's own ping timeout, instead of relying on the transport to
-// eventually notice.
+// TestConnection_KeepaliveFailureTriggersReconnect covers a keepalive
+// ping that never gets a pong: a "blackholed" connection, where ws.Read
+// alone would hang forever. This must force a reconnect via runOnce's
+// own ping timeout, rather than relying on the transport to notice.
 func TestConnection_KeepaliveFailureTriggersReconnect(t *testing.T) {
 	var connectCount atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

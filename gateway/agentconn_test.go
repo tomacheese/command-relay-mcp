@@ -16,10 +16,10 @@ import (
 	"github.com/coder/websocket"
 )
 
-// TestMain shortens the keepalive interval/timeout once, on the main test
-// goroutine before any pingLoop goroutine exists, so every later read of
-// these package vars from a spawned pingLoop is safely ordered after this
-// write (avoiding a data race against per-test set/restore).
+// TestMain shortens the keepalive interval/timeout once, on the main
+// test goroutine, before any pingLoop goroutine exists. Every later read
+// of these package vars from a spawned pingLoop is then safely ordered
+// after this write, avoiding a data race against a per-test set/restore.
 func TestMain(m *testing.M) {
 	pingInterval = 20 * time.Millisecond
 	pingTimeout = 20 * time.Millisecond
@@ -28,9 +28,9 @@ func TestMain(m *testing.M) {
 
 // syncBuffer is a mutex-guarded bytes.Buffer. TestAgentConn_CallOnTransportLoss
 // captures log output while a keepalive pingLoop goroutine may still be
-// running in the background (TestMain's shortened pingInterval makes this
-// window reachable within the test), so a plain bytes.Buffer would race
-// between that goroutine's log write and the test's own read of the buffer.
+// running in the background — TestMain's shortened pingInterval makes this
+// window reachable within the test. A plain bytes.Buffer would race between
+// that goroutine's log write and the test's own read of the buffer.
 type syncBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -90,9 +90,9 @@ func TestAgentConn_CallOnCtxTimeoutReturnsTimeoutCode(t *testing.T) {
 	clientWS := dialRegisteredDevice(t, srv, reg, "device-timeout")
 	defer clientWS.CloseNow()
 	conn, _ := reg.Get("device-timeout")
-	// Keep reading in the background so the Gateway's keepalive pings
-	// (TestMain's shortened pingInterval applies here too) get answered
-	// instead of tearing down the transport before the ctx deadline fires.
+	// Keep reading in the background so the Gateway's keepalive pings get
+	// answered instead of tearing down the transport before the ctx
+	// deadline fires (TestMain's shortened pingInterval applies here too).
 	// CloseRead can't be used here since it closes the connection on any
 	// data frame, and the Gateway's dispatched request is one.
 	go func() {
@@ -234,9 +234,9 @@ func TestAgentConn_CallOnTransportLoss(t *testing.T) {
 }
 
 // TestAgentConn_SendsKeepalivePingsWhileIdle covers that readLoop sends
-// periodic WebSocket pings even when no RPC traffic is flowing, so idle
-// infra between Agent and Gateway doesn't silently close the connection
-// on its own idle timeout.
+// periodic WebSocket pings even when no RPC traffic is flowing. Idle
+// infra between Agent and Gateway can otherwise silently close the
+// connection.
 func TestAgentConn_SendsKeepalivePingsWhileIdle(t *testing.T) {
 	reg := NewRegistry()
 	verify := func(secret string) bool { return secret == "s3cr3t" }
@@ -281,11 +281,11 @@ func TestAgentConn_SendsKeepalivePingsWhileIdle(t *testing.T) {
 	}
 }
 
-// TestAgentConn_KeepaliveFailureDisconnectsDevice covers that a
-// keepalive ping which never gets a pong (a "blackholed" connection,
-// where ws.Read alone would hang forever) forces readLoop to return via
-// its own ping timeout, so the device is unregistered instead of
-// lingering forever as falsely "connected".
+// TestAgentConn_KeepaliveFailureDisconnectsDevice covers a keepalive
+// ping that never gets a pong: a "blackholed" connection, where ws.Read
+// alone would hang forever. This must force readLoop to return via its
+// own ping timeout, so the device is unregistered instead of lingering
+// forever as falsely "connected".
 func TestAgentConn_KeepaliveFailureDisconnectsDevice(t *testing.T) {
 	reg := NewRegistry()
 	verify := func(secret string) bool { return secret == "s3cr3t" }

@@ -15,8 +15,8 @@ import (
 )
 
 // pingInterval is how often runOnce pings the Gateway while otherwise
-// idle, so infra between Agent and Gateway (reverse proxies, Cloudflare,
-// etc.) doesn't silently close the connection on its own idle timeout.
+// idle. Infra between Agent and Gateway (reverse proxies, Cloudflare,
+// etc.) can silently close an idle connection without this.
 // Overridden by tests to a much shorter interval.
 var pingInterval = 30 * time.Second
 
@@ -143,9 +143,9 @@ func (c *Connection) runOnce(ctx context.Context) error {
 
 // pingLoop periodically pings the Gateway so idle infra between Agent
 // and Gateway doesn't silently close the connection (see runOnce). A
-// failed ping closes the connection immediately so runOnce's blocked
-// ws.Read returns and Run reconnects, instead of waiting for the read
-// to hang indefinitely on a transport that's already dead.
+// failed ping closes the connection immediately. This makes runOnce's
+// blocked ws.Read return and Run reconnect, instead of waiting for the
+// read to hang indefinitely on a transport that's already dead.
 func (c *Connection) pingLoop(ctx context.Context, ws *websocket.Conn) {
 	ticker := time.NewTicker(pingInterval)
 	defer ticker.Stop()
@@ -158,6 +158,9 @@ func (c *Connection) pingLoop(ctx context.Context, ws *websocket.Conn) {
 			err := ws.Ping(pingCtx)
 			cancel()
 			if err != nil {
+				if ctx.Err() != nil {
+					return // runOnce is already shutting down for an unrelated reason
+				}
 				log.Printf("agent: keepalive ping failed: %v", err)
 				ws.CloseNow()
 				return

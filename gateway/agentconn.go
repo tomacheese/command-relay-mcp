@@ -14,8 +14,8 @@ import (
 )
 
 // pingInterval is how often readLoop pings the Agent while otherwise
-// idle, so infra between Agent and Gateway (reverse proxies, Cloudflare,
-// etc.) doesn't silently close the connection on its own idle timeout.
+// idle. Infra between Agent and Gateway (reverse proxies, Cloudflare,
+// etc.) can silently close an idle connection without this.
 // Overridden by tests to a much shorter interval.
 var pingInterval = 30 * time.Second
 
@@ -127,9 +127,9 @@ func (c *AgentConn) readLoop(ctx context.Context) error {
 
 // pingLoop periodically pings the Agent so idle infra between Agent and
 // Gateway doesn't silently close the connection (see readLoop). A failed
-// ping closes the connection immediately so readLoop's blocked ws.Read
-// returns instead of waiting for the read to hang indefinitely on a
-// transport that's already dead.
+// ping closes the connection immediately. This makes readLoop's blocked
+// ws.Read return, instead of hanging indefinitely on a transport that's
+// already dead.
 func (c *AgentConn) pingLoop(ctx context.Context) {
 	ticker := time.NewTicker(pingInterval)
 	defer ticker.Stop()
@@ -142,6 +142,9 @@ func (c *AgentConn) pingLoop(ctx context.Context) {
 			err := c.ws.Ping(pingCtx)
 			cancel()
 			if err != nil {
+				if ctx.Err() != nil {
+					return // readLoop is already shutting down for an unrelated reason
+				}
 				log.Printf("gateway: keepalive ping to device %q failed: %v", c.deviceID, err)
 				c.ws.CloseNow()
 				return
