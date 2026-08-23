@@ -75,6 +75,11 @@ func (c *AgentConn) Call(ctx context.Context, method string, params any) (json.R
 	writeErr := c.ws.Write(ctx, websocket.MessageText, data)
 	c.writeMu.Unlock()
 	if writeErr != nil {
+		if ctx.Err() == nil {
+			// A pingLoop-triggered CloseNow can race a concurrent Call, failing
+			// the Write directly before the c.closed branch below can log it.
+			log.Printf("gateway: transport failure: write to device %q failed mid-call for %s: %v", c.deviceID, method, writeErr)
+		}
 		return nil, writeErr
 	}
 

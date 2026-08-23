@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -319,4 +320,82 @@ func TestAgentConn_KeepaliveFailureDisconnectsDevice(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("device is still registered after 2s; a keepalive timeout should have disconnected it")
+}
+
+// TestAgentConn_CallLogsWriteFailureMidCall covers the ws.Write failure
+// path, distinct from TestAgentConn_CallOnTransportLoss's c.closed path.
+//
+// No readLoop runs for this AgentConn, so closing ws beforehand makes
+// Write fail deterministically instead of racing readLoop's own close.
+func TestAgentConn_CallLogsWriteFailureMidCall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		<-r.Context().Done()
+		ws.CloseNow()
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, "ws"+srv.URL[len("http"):], nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer ws.CloseNow()
+	ws.CloseNow()
+
+	conn := &AgentConn{deviceID: "device-write-fail", ws: ws, pending: make(map[string]chan *proto.Response), closed: make(chan struct{})}
+
+	var logBuf syncBuffer
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(os.Stderr)
+
+	if _, err := conn.Call(context.Background(), proto.MethodDevicePing, struct{}{}); err == nil {
+		t.Fatal("expected Call to fail after the transport was closed")
+	}
+	if !strings.Contains(logBuf.String(), "transport failure") {
+		t.Fatalf("log output = %q, want it to mention \"transport failure\"", logBuf.String())
+	}
+}
+
+// TestAgentConn_CallDoesNotLogTransportFailureOnCtxCancel covers that a
+// Write failing because the caller's own ctx was canceled — an expected
+// outcome, not a lost transport — must not be misreported as a
+// "transport failure".
+func TestAgentConn_CallDoesNotLogTransportFailureOnCtxCancel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		<-r.Context().Done()
+		ws.CloseNow()
+	}))
+	defer srv.Close()
+
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer dialCancel()
+	ws, _, err := websocket.Dial(dialCtx, "ws"+srv.URL[len("http"):], nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer ws.CloseNow()
+
+	conn := &AgentConn{deviceID: "device-ctx-cancel", ws: ws, pending: make(map[string]chan *proto.Response), closed: make(chan struct{})}
+
+	var logBuf syncBuffer
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(os.Stderr)
+
+	callCtx, callCancel := context.WithCancel(context.Background())
+	callCancel() // already canceled, so the Write itself must fail with it
+	if _, err := conn.Call(callCtx, proto.MethodDevicePing, struct{}{}); err == nil {
+		t.Fatal("expected Call to fail with an already-canceled ctx")
+	}
+	if strings.Contains(logBuf.String(), "transport failure") {
+		t.Fatalf("log output = %q, want no \"transport failure\" log for a caller-canceled ctx", logBuf.String())
+	}
 }
