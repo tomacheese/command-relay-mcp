@@ -150,13 +150,32 @@ func landlockExecMain(execArgv []string) {
 	os.Setenv("TMPDIR", scratchDir)
 	os.Setenv("HOME", scratchDir)
 
+	// SandboxedBackend's CLONE_NEWNS gave this process its own mount
+	// namespace, but the mount table it started with is still a copy of
+	// the host's — including a shared-propagation flag that would
+	// otherwise leak the following mount/remount back to the host. Make
+	// it private first, then remount /proc so it reflects this
+	// process's own PID namespace: left as the inherited host /proc,
+	// procps-family tools (ps, etc.) fail to resolve their own PID for
+	// any command that isn't PID 1 of the namespace (e.g. anything past
+	// the first stage of a pipeline).
+	if err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
+		fail()
+	}
+	if err := syscall.Mount("proc", "/proc", "proc", 0, ""); err != nil {
+		fail()
+	}
+
 	// Strict mode only: BestEffort() would silently downgrade protection
 	// on partial kernel support, which is forbidden for the same reason
 	// falling back to command.exec is forbidden. Network denial is
 	// already in place by this point —
 	// SandboxedBackend joined a fresh network namespace at process
 	// creation — so RestrictPaths only needs to cover the filesystem.
-	if err := landlock.V4.RestrictPaths(landlock.RODirs("/"), landlock.RWDirs(scratchDir)); err != nil {
+	// /dev/null is explicitly writable: it's a no-op sink that changes no
+	// persistent state, so denying writes to it (the RODirs("/") default)
+	// breaks the common `>/dev/null` redirect for no security benefit.
+	if err := landlock.V4.RestrictPaths(landlock.RODirs("/"), landlock.RWDirs(scratchDir), landlock.RWFiles("/dev/null")); err != nil {
 		fail()
 	}
 

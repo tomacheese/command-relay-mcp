@@ -44,7 +44,13 @@ func main() {
 		fail()
 	}
 	os.Setenv("TMPDIR", scratchDir)
-	if err := landlock.V4.RestrictPaths(landlock.RODirs("/"), landlock.RWDirs(scratchDir)); err != nil {
+	if err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
+		fail()
+	}
+	if err := syscall.Mount("proc", "/proc", "proc", 0, ""); err != nil {
+		fail()
+	}
+	if err := landlock.V4.RestrictPaths(landlock.RODirs("/"), landlock.RWDirs(scratchDir), landlock.RWFiles("/dev/null")); err != nil {
 		fail()
 	}
 	path, err := exec.LookPath(execArgv[0])
@@ -188,6 +194,56 @@ func TestSandboxedBackend_DeniesSignalingHostProcesses(t *testing.T) {
 	}
 	if res.ExitCode == 0 {
 		t.Fatal("sandboxed command could signal a host process — PID namespace isolation not enforced")
+	}
+}
+
+// TestSandboxedBackend_AllowsWriteToDevNull covers that the RODirs("/")
+// default doesn't block the common `>/dev/null` redirect: /dev/null is a
+// no-op sink that changes no persistent state, so denying writes to it
+// has no security benefit.
+func TestSandboxedBackend_AllowsWriteToDevNull(t *testing.T) {
+	helper := buildTestSandboxHelper(t)
+	b := NewSandboxedBackend(helper, []string{"/bin/bash", "-lc"})
+
+	h, err := b.Start(StartOptions{Command: "echo x > /dev/null"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	stderr, _ := io.ReadAll(h.Stderr())
+	res := h.Wait()
+	if res.Err != nil {
+		t.Fatalf("Wait: %v", res.Err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr=%q)", res.ExitCode, stderr)
+	}
+}
+
+// TestSandboxedBackend_PipelineProcessCanReadOwnProcSelf covers that a
+// non-PID-1 process inside the sandbox's new PID namespace still sees a
+// /proc matching that namespace. Without remounting /proc, the inherited
+// host /proc leaves procps-family tools unable to resolve their own PID
+// once they aren't PID 1 of the namespace (i.e. any command past the
+// first stage of a pipeline).
+func TestSandboxedBackend_PipelineProcessCanReadOwnProcSelf(t *testing.T) {
+	helper := buildTestSandboxHelper(t)
+	b := NewSandboxedBackend(helper, []string{"/bin/bash", "-lc"})
+
+	h, err := b.Start(StartOptions{Command: "ps -eo pid,comm | cat"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	stdout, _ := io.ReadAll(h.Stdout())
+	stderr, _ := io.ReadAll(h.Stderr())
+	res := h.Wait()
+	if res.Err != nil {
+		t.Fatalf("Wait: %v", res.Err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr=%q)", res.ExitCode, stderr)
+	}
+	if len(stdout) == 0 {
+		t.Fatal("ps produced no output")
 	}
 }
 

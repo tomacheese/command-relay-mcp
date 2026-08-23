@@ -83,17 +83,21 @@ func (b *SandboxedBackend) Start(opts StartOptions) (ProcessHandle, error) {
 	}
 	cmd.Env = append(env, scratchDirEnvVar+"="+scratchDir)
 	// New process group (Terminate signals the whole tree) plus new
-	// user+network+PID namespaces ("host process mutation denied"): the
-	// uid/gid mappings
+	// user+network+PID+mount namespaces ("host process mutation denied"):
+	// the uid/gid mappings
 	// make the child see itself as the same user it already is, so this
 	// works without root. Landlock alone does not restrict signal
 	// delivery, and same-UID kill(2) is otherwise unconditionally allowed
 	// by the kernel — CLONE_NEWPID makes every host process invisible to
 	// (and therefore unaddressable by) the sandboxed command, regardless
-	// of UID.
+	// of UID. CLONE_NEWNS is required for landlockExecMain to remount
+	// /proc against this new PID namespace — without it, procps-family
+	// tools (ps, etc.) still see the host's /proc and fail to resolve
+	// their own PID once they're not PID 1 of the namespace anymore
+	// (e.g. any command past the first in a pipeline).
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid:    true,
-		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET | syscall.CLONE_NEWPID,
+		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
 		UidMappings: []syscall.SysProcIDMap{
 			{ContainerID: 0, HostID: os.Getuid(), Size: 1},
 		},
