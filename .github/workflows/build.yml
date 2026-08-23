@@ -38,3 +38,11 @@ jobs:
         run: |
           go fmt ./...
           git diff --exit-code
+
+      - name: 👀 Validate deploy files
+        run: |
+          go build -o /tmp/command-relay-agent ./agent/cmd
+          sudo install -m 0755 /tmp/command-relay-agent /usr/local/bin/command-relay-agent
+          systemd-analyze verify --user deploy/systemd/command-relay-agent.service
+          sudo rm -f /usr/local/bin/command-relay-agent
+          apparmor_parser -Q --skip-cache deploy/apparmor/usr.local.bin.command-relay-agent

@@ -11,6 +11,12 @@
 # itself at runtime, so it needs no elevated systemd-level privileges —
 # running as the invoking user's own systemd instance is sufficient and
 # avoids the separate DynamicUser identity a system unit would need.
+# DynamicUser=yes previously also implied ProtectSystem=strict and
+# ProtectHome=read-only; those are intentionally not replaced here,
+# since command_exec's whole purpose is running arbitrary commands
+# (including writes anywhere the invoking user can already write) —
+# NoNewPrivileges/PrivateTmp below are the hardening that doesn't
+# conflict with that.
 [Unit]
 Description=Remote Commander Agent
 After=network-online.target
@@ -23,6 +29,8 @@ Restart=on-failure
 RestartSec=5
 KillMode=control-group
 TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
 
 Environment=DEVICE_ID=
 Environment=DEVICE_SECRET=

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -15,10 +16,22 @@ import (
 // relies on, so this test can prove the backend/kernel mechanism without
 // depending on the real Agent binary (that wiring is Task 8).
 func buildTestSandboxHelper(t *testing.T) string {
+	return buildTestSandboxHelperVariant(t, true)
+}
+
+// buildTestSandboxHelperVariant is buildTestSandboxHelper with the
+// RWFiles("/dev/null") grant made optional, so a test can prove that
+// grant is what makes a /dev/null write succeed rather than some other
+// cause (e.g. Landlock not restricting device files at all).
+func buildTestSandboxHelperVariant(t *testing.T, allowDevNullWrite bool) string {
 	t.Helper()
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.go")
-	const program = `package main
+	landlockRules := `landlock.RODirs("/"), landlock.RWDirs(scratchDir)`
+	if allowDevNullWrite {
+		landlockRules += `, landlock.RWFiles("/dev/null")`
+	}
+	program := fmt.Sprintf(`package main
 
 import (
 	"os"
@@ -50,7 +63,7 @@ func main() {
 	if err := syscall.Mount("proc", "/proc", "proc", 0, ""); err != nil {
 		fail()
 	}
-	if err := landlock.V4.RestrictPaths(landlock.RODirs("/"), landlock.RWDirs(scratchDir), landlock.RWFiles("/dev/null")); err != nil {
+	if err := landlock.V4.RestrictPaths(%s); err != nil {
 		fail()
 	}
 	path, err := exec.LookPath(execArgv[0])
@@ -60,7 +73,7 @@ func main() {
 	syscall.Exec(path, execArgv, os.Environ())
 	fail() // only reached if Exec itself failed
 }
-`
+`, landlockRules)
 	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -197,10 +210,8 @@ func TestSandboxedBackend_DeniesSignalingHostProcesses(t *testing.T) {
 	}
 }
 
-// TestSandboxedBackend_AllowsWriteToDevNull covers that the RODirs("/")
-// default doesn't block the common `>/dev/null` redirect: /dev/null is a
-// no-op sink that changes no persistent state, so denying writes to it
-// has no security benefit.
+// TestSandboxedBackend_AllowsWriteToDevNull covers that `> /dev/null`
+// succeeds inside the sandbox.
 func TestSandboxedBackend_AllowsWriteToDevNull(t *testing.T) {
 	helper := buildTestSandboxHelper(t)
 	b := NewSandboxedBackend(helper, []string{"/bin/bash", "-lc"})
@@ -219,12 +230,30 @@ func TestSandboxedBackend_AllowsWriteToDevNull(t *testing.T) {
 	}
 }
 
-// TestSandboxedBackend_PipelineProcessCanReadOwnProcSelf covers that a
-// non-PID-1 process inside the sandbox's new PID namespace still sees a
-// /proc matching that namespace. Without remounting /proc, the inherited
-// host /proc leaves procps-family tools unable to resolve their own PID
-// once they aren't PID 1 of the namespace (i.e. any command past the
-// first stage of a pipeline).
+// TestSandboxedBackend_DeniesWriteToDevNullWithoutGrant is the negative
+// counterpart to TestSandboxedBackend_AllowsWriteToDevNull: it proves
+// that success there is actually caused by the RWFiles("/dev/null")
+// grant, not by Landlock leaving device files unrestricted regardless.
+func TestSandboxedBackend_DeniesWriteToDevNullWithoutGrant(t *testing.T) {
+	helper := buildTestSandboxHelperVariant(t, false)
+	b := NewSandboxedBackend(helper, []string{"/bin/bash", "-lc"})
+
+	h, err := b.Start(StartOptions{Command: "echo x > /dev/null"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	res := h.Wait()
+	if res.Err != nil {
+		t.Fatalf("Wait: %v", res.Err)
+	}
+	if res.ExitCode == 0 {
+		t.Fatal("write to /dev/null unexpectedly succeeded without the RWFiles(\"/dev/null\") grant")
+	}
+}
+
+// TestSandboxedBackend_PipelineProcessCanReadOwnProcSelf covers that
+// procps-family tools work for a non-PID-1 process inside the sandbox,
+// e.g. the second stage of a pipeline.
 func TestSandboxedBackend_PipelineProcessCanReadOwnProcSelf(t *testing.T) {
 	helper := buildTestSandboxHelper(t)
 	b := NewSandboxedBackend(helper, []string{"/bin/bash", "-lc"})
@@ -244,6 +273,36 @@ func TestSandboxedBackend_PipelineProcessCanReadOwnProcSelf(t *testing.T) {
 	}
 	if len(stdout) == 0 {
 		t.Fatal("ps produced no output")
+	}
+}
+
+// TestSandboxedBackend_MountsDoNotLeakToHost covers the MS_PRIVATE
+// remount: a filesystem mounted inside the sandbox's own mount
+// namespace must not appear in the host's mount table.
+func TestSandboxedBackend_MountsDoNotLeakToHost(t *testing.T) {
+	helper := buildTestSandboxHelper(t)
+	b := NewSandboxedBackend(helper, []string{"/bin/bash", "-lc"})
+
+	const marker = "rc-sandbox-mount-leak-marker"
+	h, err := b.Start(StartOptions{Command: fmt.Sprintf(`mkdir "$TMPDIR/mnt" && mount -t tmpfs %s "$TMPDIR/mnt"`, marker)})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	stderr, _ := io.ReadAll(h.Stderr())
+	res := h.Wait()
+	if res.Err != nil {
+		t.Fatalf("Wait: %v", res.Err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr=%q)", res.ExitCode, stderr)
+	}
+
+	hostMounts, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		t.Fatalf("ReadFile /proc/self/mountinfo: %v", err)
+	}
+	if strings.Contains(string(hostMounts), marker) {
+		t.Fatal("sandboxed mount leaked into the host's mount table")
 	}
 }
 

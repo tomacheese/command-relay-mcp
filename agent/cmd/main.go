@@ -112,12 +112,13 @@ func main() {
 	}
 }
 
-// landlockExecMain applies a strict, non-BestEffort Landlock ruleset —
-// read-only over the whole filesystem except a private per-invocation
-// scratch directory — then execs the real command, replacing this
-// process. It never returns on success; on any setup failure it exits
-// with backend.SandboxSetupFailedExitCode instead of falling through to
-// running the command unsandboxed.
+// landlockExecMain isolates mount propagation and remounts /proc for
+// this process's own PID namespace, then applies a strict,
+// non-BestEffort Landlock ruleset — read-only over the whole filesystem
+// except a private per-invocation scratch directory — then execs the
+// real command, replacing this process. It never returns on success; on
+// any setup failure it exits with backend.SandboxSetupFailedExitCode
+// instead of falling through to running the command unsandboxed.
 //
 // The exit code alone cannot signal "setup failed" to the parent. A
 // successful syscall.Exec fully replaces this process image with the
