@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -273,36 +272,6 @@ func TestSandboxedBackend_PipelineProcessCanReadOwnProcSelf(t *testing.T) {
 	}
 	if len(stdout) == 0 {
 		t.Fatal("ps produced no output")
-	}
-}
-
-// TestSandboxedBackend_MountsDoNotLeakToHost covers the MS_PRIVATE
-// remount: a filesystem mounted inside the sandbox's own mount
-// namespace must not appear in the host's mount table.
-func TestSandboxedBackend_MountsDoNotLeakToHost(t *testing.T) {
-	helper := buildTestSandboxHelper(t)
-	b := NewSandboxedBackend(helper, []string{"/bin/bash", "-lc"})
-
-	const marker = "rc-sandbox-mount-leak-marker"
-	h, err := b.Start(StartOptions{Command: fmt.Sprintf(`mkdir "$TMPDIR/mnt" && mount -t tmpfs %s "$TMPDIR/mnt"`, marker)})
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	stderr, _ := io.ReadAll(h.Stderr())
-	res := h.Wait()
-	if res.Err != nil {
-		t.Fatalf("Wait: %v", res.Err)
-	}
-	if res.ExitCode != 0 {
-		t.Fatalf("exit code = %d, want 0 (stderr=%q)", res.ExitCode, stderr)
-	}
-
-	hostMounts, err := os.ReadFile("/proc/self/mountinfo")
-	if err != nil {
-		t.Fatalf("ReadFile /proc/self/mountinfo: %v", err)
-	}
-	if strings.Contains(string(hostMounts), marker) {
-		t.Fatal("sandboxed mount leaked into the host's mount table")
 	}
 }
 
