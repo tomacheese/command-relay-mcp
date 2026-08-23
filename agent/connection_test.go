@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,6 +13,16 @@ import (
 	"command-relay-mcp/internal/proto"
 	"github.com/coder/websocket"
 )
+
+// TestMain shortens the keepalive interval/timeout once, on the main test
+// goroutine before any pingLoop goroutine exists, so every later read of
+// these package vars from a spawned pingLoop is safely ordered after this
+// write (avoiding a data race against per-test set/restore).
+func TestMain(m *testing.M) {
+	pingInterval = 20 * time.Millisecond
+	pingTimeout = 20 * time.Millisecond
+	os.Exit(m.Run())
+}
 
 // TestConnection_MultiplexesConcurrentRequests covers that multiple
 // RPCs must be multiplexed on one connection, so a slow handler in
@@ -156,10 +167,6 @@ func TestConnection_HandshakeAndRoundTrip(t *testing.T) {
 // infra between Agent and Gateway (reverse proxies, Cloudflare, etc.)
 // doesn't silently close the connection on its own idle timeout.
 func TestConnection_SendsKeepalivePingsWhileIdle(t *testing.T) {
-	origInterval := pingInterval
-	pingInterval = 20 * time.Millisecond
-	defer func() { pingInterval = origInterval }()
-
 	pings := make(chan struct{}, 8)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
@@ -215,11 +222,6 @@ func TestConnection_SendsKeepalivePingsWhileIdle(t *testing.T) {
 // runOnce's own ping timeout, instead of relying on the transport to
 // eventually notice.
 func TestConnection_KeepaliveFailureTriggersReconnect(t *testing.T) {
-	origInterval, origTimeout := pingInterval, pingTimeout
-	pingInterval = 20 * time.Millisecond
-	pingTimeout = 20 * time.Millisecond
-	defer func() { pingInterval = origInterval; pingTimeout = origTimeout }()
-
 	var connectCount atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
