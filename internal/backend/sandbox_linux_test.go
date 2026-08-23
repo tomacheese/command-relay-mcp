@@ -15,10 +15,22 @@ import (
 // relies on, so this test can prove the backend/kernel mechanism without
 // depending on the real Agent binary (that wiring is Task 8).
 func buildTestSandboxHelper(t *testing.T) string {
+	return buildTestSandboxHelperVariant(t, true)
+}
+
+// buildTestSandboxHelperVariant is buildTestSandboxHelper with the
+// RWFiles("/dev/null") grant made optional, so a test can prove that
+// grant is what makes a /dev/null write succeed rather than some other
+// cause (e.g. Landlock not restricting device files at all).
+func buildTestSandboxHelperVariant(t *testing.T, allowDevNullWrite bool) string {
 	t.Helper()
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.go")
-	const program = `package main
+	landlockRules := `landlock.RODirs("/"), landlock.RWDirs(scratchDir)`
+	if allowDevNullWrite {
+		landlockRules += `, landlock.RWFiles("/dev/null")`
+	}
+	program := fmt.Sprintf(`package main
 
 import (
 	"os"
@@ -44,7 +56,13 @@ func main() {
 		fail()
 	}
 	os.Setenv("TMPDIR", scratchDir)
-	if err := landlock.V4.RestrictPaths(landlock.RODirs("/"), landlock.RWDirs(scratchDir)); err != nil {
+	if err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
+		fail()
+	}
+	if err := syscall.Mount("proc", "/proc", "proc", 0, ""); err != nil {
+		fail()
+	}
+	if err := landlock.V4.RestrictPaths(%s); err != nil {
 		fail()
 	}
 	path, err := exec.LookPath(execArgv[0])
@@ -54,7 +72,7 @@ func main() {
 	syscall.Exec(path, execArgv, os.Environ())
 	fail() // only reached if Exec itself failed
 }
-`
+`, landlockRules)
 	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -188,6 +206,72 @@ func TestSandboxedBackend_DeniesSignalingHostProcesses(t *testing.T) {
 	}
 	if res.ExitCode == 0 {
 		t.Fatal("sandboxed command could signal a host process — PID namespace isolation not enforced")
+	}
+}
+
+// TestSandboxedBackend_AllowsWriteToDevNull covers that `> /dev/null`
+// succeeds inside the sandbox.
+func TestSandboxedBackend_AllowsWriteToDevNull(t *testing.T) {
+	helper := buildTestSandboxHelper(t)
+	b := NewSandboxedBackend(helper, []string{"/bin/bash", "-lc"})
+
+	h, err := b.Start(StartOptions{Command: "echo x > /dev/null"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	stderr, _ := io.ReadAll(h.Stderr())
+	res := h.Wait()
+	if res.Err != nil {
+		t.Fatalf("Wait: %v", res.Err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr=%q)", res.ExitCode, stderr)
+	}
+}
+
+// TestSandboxedBackend_DeniesWriteToDevNullWithoutGrant is the negative
+// counterpart to TestSandboxedBackend_AllowsWriteToDevNull: it proves
+// that success there is actually caused by the RWFiles("/dev/null")
+// grant, not by Landlock leaving device files unrestricted regardless.
+func TestSandboxedBackend_DeniesWriteToDevNullWithoutGrant(t *testing.T) {
+	helper := buildTestSandboxHelperVariant(t, false)
+	b := NewSandboxedBackend(helper, []string{"/bin/bash", "-lc"})
+
+	h, err := b.Start(StartOptions{Command: "echo x > /dev/null"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	res := h.Wait()
+	if res.Err != nil {
+		t.Fatalf("Wait: %v", res.Err)
+	}
+	if res.ExitCode == 0 {
+		t.Fatal("write to /dev/null unexpectedly succeeded without the RWFiles(\"/dev/null\") grant")
+	}
+}
+
+// TestSandboxedBackend_PipelineProcessCanReadOwnProcSelf covers that
+// procps-family tools work for a non-PID-1 process inside the sandbox,
+// e.g. the second stage of a pipeline.
+func TestSandboxedBackend_PipelineProcessCanReadOwnProcSelf(t *testing.T) {
+	helper := buildTestSandboxHelper(t)
+	b := NewSandboxedBackend(helper, []string{"/bin/bash", "-lc"})
+
+	h, err := b.Start(StartOptions{Command: "ps -eo pid,comm | cat"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	stdout, _ := io.ReadAll(h.Stdout())
+	stderr, _ := io.ReadAll(h.Stderr())
+	res := h.Wait()
+	if res.Err != nil {
+		t.Fatalf("Wait: %v", res.Err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr=%q)", res.ExitCode, stderr)
+	}
+	if len(stdout) == 0 {
+		t.Fatal("ps produced no output")
 	}
 }
 

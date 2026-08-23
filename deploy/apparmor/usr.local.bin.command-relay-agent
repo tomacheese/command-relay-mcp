@@ -1,0 +1,14 @@
+# Grants CLONE_NEWUSER + CLONE_NEWNS ("userns") to the Agent binary
+# without otherwise confining it. Needed on hosts where
+# kernel.apparmor_restrict_unprivileged_userns=1 (the default since
+# Ubuntu 24.04): that setting blocks unprivileged user+mount namespace
+# creation for any binary without an explicit "userns," rule, which
+# breaks command_read's Landlock sandbox (internal/backend/sandbox_linux.go
+# needs CLONE_NEWNS to remount /proc for the sandboxed PID namespace).
+# Load with: apparmor_parser -r /etc/apparmor.d/usr.local.bin.command-relay-agent
+abi <abi/4.0>,
+include <tunables/global>
+
+/usr/local/bin/command-relay-agent flags=(unconfined) {
+  userns,
+}
