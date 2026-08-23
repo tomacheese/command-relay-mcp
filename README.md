@@ -42,6 +42,8 @@ loginctl enable-linger "$USER"              # keep it running after logout
 systemctl --user enable --now command-relay-agent
 ```
 
+自動更新(デフォルトで有効。`AUTO_UPDATE_ENABLED=false` で無効化できる)を使う場合、Agent は起動中バイナリ自身のファイルを新しいバイナリで置き換える。上記の `sudo cp ... /usr/local/bin/` のように root 所有・非特権ユーザー書き込み不可のパスに配置していると、この置き換えは失敗しログに記録されるだけで自動更新は機能しない。自動更新を使うなら、バイナリは Agent を実行するユーザー自身が書き込み可能な場所(例: `~/.local/bin/command-relay-agent`)に配置し、`ExecStart` をそのパスに合わせて `systemctl --user edit` で上書きすること。
+
 ## 🔧 Development
 
 ```bash
