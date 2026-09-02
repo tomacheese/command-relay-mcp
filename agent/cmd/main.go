@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -166,6 +167,7 @@ func landlockExecMain(execArgv []string) {
 	if scratchDir == "" {
 		fail()
 	}
+	linkHostHomeEntries(os.Getenv("HOME"), scratchDir)
 	os.Setenv("TMPDIR", scratchDir)
 	os.Setenv("HOME", scratchDir)
 
@@ -188,6 +190,47 @@ func landlockExecMain(execArgv []string) {
 	}
 	if err := syscall.Exec(path, execArgv, os.Environ()); err != nil {
 		fail()
+	}
+}
+
+// hostHomeEntriesToLink are the login-shell profile scripts and XDG base
+// directories symlinked from the real host HOME into the sandbox's
+// scratch HOME (see linkHostHomeEntries). This list is deliberately
+// generic — shell profile filenames plus the XDG Base Directory
+// names — rather than any specific tool manager's own directory, so it
+// keeps working for whichever user-level tool manager (mise, asdf, ...)
+// the host happens to use.
+var hostHomeEntriesToLink = []string{
+	".profile", ".bash_profile", ".bash_login", ".bashrc",
+	".zshenv", ".zprofile", ".zshrc",
+	".config", ".local", ".cache",
+}
+
+// linkHostHomeEntries symlinks hostHomeEntriesToLink's existing entries
+// from realHome into scratchDir, so a login shell run with HOME=scratchDir
+// still sources the host's ~/.profile and resolves the same PATH/XDG
+// config a normal command_exec session would — without making scratchDir
+// itself an alias for the whole real HOME (issue #31). Landlock is applied
+// after this and after HOME is repointed to scratchDir, so it resolves
+// these through the symlink to the real, RODirs("/")-covered path: reads
+// succeed, writes still don't, and any new top-level entry a command
+// creates under $HOME (not one of these names) lands in scratchDir itself,
+// which stays writable.
+//
+// Best-effort: a missing realHome, or an entry that doesn't exist or
+// can't be symlinked, is skipped rather than failing sandbox setup — a
+// host without a user-level tool manager (or without HOME set at all)
+// must see no behavior change.
+func linkHostHomeEntries(realHome, scratchDir string) {
+	if realHome == "" {
+		return
+	}
+	for _, name := range hostHomeEntriesToLink {
+		target := filepath.Join(realHome, name)
+		if _, err := os.Lstat(target); err != nil {
+			continue
+		}
+		os.Symlink(target, filepath.Join(scratchDir, name))
 	}
 }
 
