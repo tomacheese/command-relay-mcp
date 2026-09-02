@@ -80,7 +80,11 @@ func main() {
 	binPath := filepath.Join(dir, "helper")
 	cmd := exec.Command("go", "build", "-o", binPath, ".")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod")
+	// -buildvcs=false: dir is a throwaway module outside the repo, but
+	// "go build" still probes for a VCS root and fails hard if that probe
+	// itself errors (e.g. no repo found at all) rather than just skipping
+	// stamping.
+	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod -buildvcs=false")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go build helper: %v\n%s", err, out)
 	}
