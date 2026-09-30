@@ -13,6 +13,18 @@ LLM client  --MCP (HTTPS)-->  Gateway  <--WebSocket--  Agent (device A)
                                   '-----WebSocket-----  Agent (device B)
 ```
 
+## Read-only MCP tools
+
+The Gateway exposes focused inspection tools so an Agent can read common state without running an arbitrary command. Each tool selects a fixed operation on the selected device and is marked read-only in MCP metadata:
+
+- **Git:** `git_status`, `git_diff`, `git_log` read a working tree at a supplied repository path. Status disables optional index locks; diff disables external diff and text conversion.
+- **Docker:** `docker_ps`, `docker_inspect`, `docker_logs` list containers, show selected state and image fields, or read a bounded log tail. Container logs are limited to 500 lines and at most the last seven days.
+- **systemd:** `systemd_status`, `systemd_units`, `journal_query` inspect the current user's services and unit logs. Journal reads are limited to 500 lines and the last 30 days.
+- **tmux:** `tmux_sessions`, `tmux_panes`, `tmux_capture` inspect existing sessions and read a bounded pane history without starting a tmux server.
+- **GitHub:** `github_repo`, `github_issue`, `github_pull_request` read repository, issue, and pull request metadata from `api.github.com`. Public resources do not require a token; set `GH_TOKEN` or `GITHUB_TOKEN` in the Agent environment to access private repositories or authenticated API limits.
+
+Outputs are bounded, and the Agent accepts only typed selectors and limits for these tools; it does not accept a shell command or executable path. Tools that need a host utility return an unsupported error if that utility is unavailable. Existing `command_exec` and sandboxed `command_read` remain available for other tasks.
+
 ## 🚀 Installation
 
 ### Gateway

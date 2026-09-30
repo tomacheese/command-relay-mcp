@@ -14,6 +14,7 @@ const (
 	MethodDevicePing       = "device.ping"
 	MethodCommandExec      = "command.exec"
 	MethodCommandRead      = "command.read"
+	MethodReadQuery        = "read.query"
 	MethodProcessStart     = "process.start"
 	MethodProcessRead      = "process.read"
 	MethodProcessWrite     = "process.write"

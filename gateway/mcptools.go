@@ -80,6 +80,7 @@ func NewMCPServer(reg *Registry) *mcp.Server {
 	registerProcessTools(server, reg)
 	registerExecutionTools(server, reg)
 	registerFilesystemTools(server, reg)
+	registerReadQueryTools(server, reg)
 
 	return server
 }

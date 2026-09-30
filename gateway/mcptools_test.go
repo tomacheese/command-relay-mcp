@@ -68,6 +68,77 @@ func TestMCPServer_DevicesListAndPing(t *testing.T) {
 	}
 }
 
+func TestMCPServer_ReadQueryToolsAreReadOnlyAndRouteToAgent(t *testing.T) {
+	reg := NewRegistry()
+	wsSrv := newFakeAgentServer(t, reg)
+	defer wsSrv.Close()
+	d := newTestDialedDevice(t, wsSrv.URL, "pine")
+	defer d.Close()
+	mcpSrv := httptest.NewServer(NewMCPHTTPHandlerNoAuth(reg))
+	defer mcpSrv.Close()
+
+	transport := &mcp.StreamableClientTransport{Endpoint: mcpSrv.URL}
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "v0.0.0"}, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	session, err := client.Connect(ctx, transport, nil)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer session.Close()
+
+	tools, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	readToolCount := 0
+	for _, tool := range tools.Tools {
+		if strings.HasPrefix(tool.Name, "git_") || strings.HasPrefix(tool.Name, "github_") || strings.HasPrefix(tool.Name, "docker_") || strings.HasPrefix(tool.Name, "systemd_") || strings.HasPrefix(tool.Name, "journal_") || strings.HasPrefix(tool.Name, "tmux_") {
+			readToolCount++
+			if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+				t.Errorf("tool %q is missing ReadOnlyHint", tool.Name)
+			}
+			var schema struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			}
+			schemaJSON, err := json.Marshal(tool.InputSchema)
+			if err != nil {
+				t.Fatalf("marshal %q input schema: %v", tool.Name, err)
+			}
+			if err := json.Unmarshal(schemaJSON, &schema); err != nil {
+				t.Fatalf("unmarshal %q input schema: %v", tool.Name, err)
+			}
+			if _, ok := schema.Properties["command"]; ok {
+				t.Errorf("tool %q exposes a free-form command input", tool.Name)
+			}
+		}
+	}
+	if readToolCount != 15 {
+		t.Fatalf("read query tools = %d, want 15", readToolCount)
+	}
+
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "git_status",
+		Arguments: map[string]any{
+			"device_id":       "pine",
+			"repository_path": "/tmp/repository",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool git_status: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("git_status returned tool error: %+v", result.Content)
+	}
+	var output agent.ReadQueryResult
+	if err := unmarshalStructured(result.StructuredContent, &output); err != nil {
+		t.Fatalf("unmarshal git_status result: %v", err)
+	}
+	if output.Stdout != "read query result" {
+		t.Fatalf("stdout = %q, want fake Agent result", output.Stdout)
+	}
+}
+
 func TestMCPServer_CommandExecCarriesClientContextID(t *testing.T) {
 	reg := NewRegistry()
 	wsSrv := newFakeAgentServer(t, reg)
@@ -279,6 +350,8 @@ func (d *testDialedDevice) serve() {
 			json.Unmarshal(req.Params, &p)
 			d.lastClientContextID = p.ClientContextID
 			resp.Result = json.RawMessage(`{"process_id":"p1","os_pid":1,"stdout":"","stderr":"","exit_code":0,"timed_out":false}`)
+		case proto.MethodReadQuery:
+			resp.Result = json.RawMessage(`{"stdout":"read query result","exit_code":0}`)
 		case proto.MethodFileWrite:
 			resp.Result = json.RawMessage(`{}`)
 		case proto.MethodFileRead:
