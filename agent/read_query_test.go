@@ -18,6 +18,8 @@ import (
 )
 
 func TestBuildReadQueryCommand_UsesFixedReadOperations(t *testing.T) {
+	// Relative to now: journal --since is rejected when older than 30 days.
+	journalSince := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
 	repo := t.TempDir()
 	cases := []struct {
 		name string
@@ -79,9 +81,9 @@ func TestBuildReadQueryCommand_UsesFixedReadOperations(t *testing.T) {
 		},
 		{
 			name: "journal unit and since",
-			in:   ReadQueryParams{Operation: readQueryJournal, Unit: "command-relay-agent.service", Since: "2026-09-01T00:00:00Z", Lines: 40},
+			in:   ReadQueryParams{Operation: readQueryJournal, Unit: "command-relay-agent.service", Since: journalSince, Lines: 40},
 			bin:  "journalctl",
-			want: []string{"--user", "--unit", "command-relay-agent.service", "--since", "2026-09-01T00:00:00Z", "--lines", "40", "--output=short-iso", "--no-pager", "--quiet"},
+			want: []string{"--user", "--unit", "command-relay-agent.service", "--since", journalSince, "--lines", "40", "--output=short-iso", "--no-pager", "--quiet"},
 		},
 		{
 			name: "tmux does not start a server",
