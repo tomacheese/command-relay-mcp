@@ -6,7 +6,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/landlock-lsm/go-landlock v0.11.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
-	modernc.org/sqlite v1.61.0
+	modernc.org/sqlite v1.61.1
 )
 
 require (
