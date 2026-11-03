@@ -1,4 +1,4 @@
-# Enforces base spec §9's Agent kill boundary at the cgroup level:
+# Enforces the Agent's kill boundary at the cgroup level:
 # KillMode=control-group (systemd's default, spelled out here so it
 # survives an override elsewhere) sends the stop signal to every
 # process in this unit's cgroup, not just the Agent's own PID — so

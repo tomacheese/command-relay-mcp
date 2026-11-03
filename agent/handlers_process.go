@@ -41,10 +41,10 @@ type ProcessReadResult struct {
 	ExitCode              *int   `json:"exit_code"`
 }
 
-// ProcessWriteParams carries UTF-8 text stdin only for V1.
+// ProcessWriteParams carries UTF-8 text stdin only.
 //
 // ponytail: binary stdin (base64) is deferred until a real caller needs
-// it — every V1 use case (git, build tools, REPLs) speaks text stdin.
+// it — every current use case (git, build tools, REPLs) speaks text stdin.
 type ProcessWriteParams struct {
 	ProcessID string `json:"process_id"`
 	Data      string `json:"data"`

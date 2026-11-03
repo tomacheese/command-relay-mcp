@@ -283,10 +283,10 @@ func (b unobservableExitBackend) Start(opts backend.StartOptions) (backend.Proce
 	return unobservableExitHandle{h}, nil
 }
 
-// TestProcessList_ReportsExitedEvenWithUnobservableExitCode covers base
-// spec §8.2: state must come from runtime inspection (the process really
-// did exit), not from ExitCode() being non-nil — which stays nil forever
-// whenever the backend couldn't translate the exit to a code.
+// TestProcessList_ReportsExitedEvenWithUnobservableExitCode checks that
+// state comes from runtime inspection (the process really did exit), not
+// from ExitCode() being non-nil — which stays nil forever whenever the
+// backend couldn't translate the exit to a code.
 func TestProcessList_ReportsExitedEvenWithUnobservableExitCode(t *testing.T) {
 	mgr := NewManager(unobservableExitBackend{backend.NewLinuxBackend([]string{"/bin/bash", "-lc"})}, 4<<20, 4<<20, time.Hour)
 	hist, err := OpenHistoryStore(filepath.Join(t.TempDir(), "history.db"))
@@ -336,10 +336,10 @@ func TestProcessList_ReportsExitedEvenWithUnobservableExitCode(t *testing.T) {
 	}
 }
 
-// TestProcessHandlers_TracksProcessStartedUnderSandboxManager covers base
-// spec §8.5: a command_read call that times out leaves its process
-// running under the sandbox Manager, not the plain one — process_read/
-// write/wait/terminate/list must still find it there.
+// TestProcessHandlers_TracksProcessStartedUnderSandboxManager checks that
+// a command_read call that times out leaves its process running under the
+// sandbox Manager, not the plain one — process_read/write/wait/terminate/
+// list must still find it there.
 func TestProcessHandlers_TracksProcessStartedUnderSandboxManager(t *testing.T) {
 	mgr := NewManager(backend.NewLinuxBackend([]string{"/bin/bash", "-lc"}), 4<<20, 4<<20, time.Hour)
 	sandboxMgr := NewManager(backend.NewLinuxBackend([]string{"/bin/bash", "-lc"}), 4<<20, 4<<20, time.Hour)

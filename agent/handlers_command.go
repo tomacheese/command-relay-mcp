@@ -192,13 +192,12 @@ func (h *CommandHandlers) Read(ctx context.Context, raw json.RawMessage) (any, *
 	}
 
 	// The sandbox setup itself failing is a distinct condition from the
-	// sandboxed command's own non-zero exit (which is a normal RPC
-	// success — the sandbox worked as intended): always sandbox_violation,
-	// never a plain exit code (addendum §4 step 3). Detected via the
-	// backend's out-of-band status pipe (ProcessRecord.SandboxSetupFailed),
-	// not the exit code itself — that reserved code is also an ordinary
-	// exit code the sandboxed command could legitimately return on its
-	// own.
+	// sandboxed command's own non-zero exit (which is a normal RPC success
+	// — the sandbox worked as intended): always sandbox_violation, never a
+	// plain exit code. Detected via the backend's out-of-band status pipe
+	// (ProcessRecord.SandboxSetupFailed), not the exit code itself — that
+	// reserved code is also an ordinary exit code the sandboxed command
+	// could legitimately return on its own.
 	if !timedOut && rec.SandboxSetupFailed() {
 		log.Printf("agent: sandbox failure for execution %s: command_read setup failed", execID)
 		return nil, &proto.RPCError{Code: proto.ErrSandboxViolation, Message: "sandbox setup failed for this call"}

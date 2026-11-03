@@ -1,11 +1,12 @@
-# Gateway の Docker image (ghcr.io) と Agent バイナリ (GitHub Release) を
-# 同一バージョンタグで同時にリリースする。
+# Releases the Gateway Docker image (ghcr.io) and the Agent binary
+# (GitHub Release) together under the same version tag.
 #
-# バージョンタグは docker-ci-gateway ジョブ (reusable-docker.yml 内の
-# calc-version) が一度だけ発行し、agent-release はそのタグをそのまま
-# 再利用する。Gateway と Agent を別ワークフローで独立にタグ付けすると、
-# 同じマージで2つの github-tag-action が並行実行され、同じタグ名を
-# 取り合って競合したり、Gateway と Agent のバージョンがズレたりする。
+# The version tag is issued exactly once, by the docker-ci-gateway job
+# (calc-version in reusable-docker.yml), and agent-release reuses it as
+# is. Tagging the Gateway and Agent independently in separate workflows
+# would run two github-tag-action jobs in parallel for the same merge,
+# racing for the same tag name and letting the Gateway and Agent versions
+# drift apart.
 
 name: Release
 
@@ -31,8 +32,9 @@ on:
   merge_group:
 
 concurrency:
-  # pull_request と pull_request_target が同一グループになると互いをキャンセルしてしまうため
-  # event_name を含めることで両イベントのキャンセルを独立させる
+  # Without event_name, pull_request and pull_request_target would share a
+  # group and cancel each other; including it keeps their cancellation
+  # independent.
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
@@ -46,7 +48,7 @@ jobs:
   post-approval-request:
     name: Post approval request
     runs-on: ubuntu-latest
-    # フォーク PR のときのみ承認リクエストを投稿する（closed は不要）
+    # Post the approval request only for fork PRs (not needed on closed).
     if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository && github.event.action != 'closed'
     continue-on-error: true
     permissions:
@@ -78,9 +80,9 @@ jobs:
     name: Approval gate
     runs-on: ubuntu-latest
     needs: post-approval-request
-    # post-approval-request の結果に関わらず常に実行する
+    # Always run, regardless of the post-approval-request result.
     if: always()
-    # フォーク PR かつ closed でない場合のみ Environment で手動承認が必要
+    # Manual approval via the Environment is required only for fork PRs that are not closed.
     environment: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository && github.event.action != 'closed' && 'fork-pr-build' || '' }}
     permissions: {}
     steps:
@@ -106,10 +108,10 @@ jobs:
   agent-release:
     name: Release Agent binary
     needs: docker-ci-gateway
-    # docker-ci-gateway が全ステップ(タグ発行含む)を完了してから開始する。
-    # tag 出力は dry-run（未マージ）でも計算されるので、GoReleaser 側の
-    # snapshot 判定 (below) と合わせて常に needs.docker-ci-gateway.outputs.tag
-    # を参照できる。
+    # Starts only after docker-ci-gateway has finished every step
+    # (including tag issuance). The tag output is computed even in dry-run
+    # (unmerged) runs, so together with the GoReleaser snapshot decision
+    # (below), needs.docker-ci-gateway.outputs.tag can always be referenced.
     if: always() && needs.docker-ci-gateway.result == 'success' && (github.event.action != 'closed' || github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
     permissions:
@@ -122,9 +124,9 @@ jobs:
           ref: ${{ github.event.pull_request.merged == true && github.base_ref || github.event.pull_request.head.sha || github.sha }}
 
       - name: Fetch tags
-        # docker-ci-gateway がこのコミットに対して既にタグを push している
-        # （マージ時のみ）。Agent はここでタグを"消費"するだけで、
-        # 自分では一切タグを発行しない。
+        # docker-ci-gateway has already pushed the tag for this commit
+        # (on merge only). The Agent only consumes the tag here and never
+        # issues one itself.
         run: git fetch --tags
 
       - name: Set up Go
@@ -141,12 +143,12 @@ jobs:
       - name: GoReleaser
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
-          # マージ済みの時だけ実タグでリリースする。それ以外（PRプレビュー・
-          # merge_group）は docker-ci-gateway が dry-run で計算した tag は
-          # 実際には push されていないため、snapshot ビルドに留める。
-          # GoReleaser の release.mode の既定値は keep-existing なので、
-          # docker-ci-gateway が同じタグで既に作成した GitHub Release の
-          # 本文はそのまま残り、Agent の配布アーカイブだけが追加される。
+          # Release with the real tag only once merged. Otherwise (PR
+          # preview, merge_group) the tag computed by docker-ci-gateway in
+          # dry-run was never actually pushed, so stay with a snapshot build.
+          # GoReleaser's release.mode defaults to keep-existing, so the body
+          # of the GitHub Release that docker-ci-gateway already created for
+          # the same tag is kept and only the Agent archives are added.
           args: release --clean ${{ github.event.pull_request.merged != true && '--skip=validate,publish --snapshot' || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
