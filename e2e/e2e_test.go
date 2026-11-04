@@ -84,7 +84,7 @@ func realAgentBinary(t *testing.T) string {
 // gatewayURL, and keeps it running until the test ends. The sandboxed
 // backend behind command.read re-execs the real, separately built
 // agent/cmd binary (realAgentBinary), the same way the production Agent
-// re-execs itself (addendum §4) — this in-process harness cannot use its
+// re-execs itself — this in-process harness cannot use its
 // own test binary as the re-exec target, since that binary doesn't
 // implement the "--landlock-exec" subcommand.
 func startTestAgent(t *testing.T, deviceID, deviceSecret, gatewayURL string) {
@@ -221,11 +221,11 @@ func TestE2E_CommandExecRunsRealShellCommand(t *testing.T) {
 	}
 }
 
-// TestE2E_ExecutionHistoryPersistsAndIsQueryableOverMCP covers base
-// spec §27 acceptance criteria #9-10 and addendum §7 scenario 5: after
-// a real command_exec, the execution is retrievable via execution_list
-// / execution_get, and the persisted row never contains stdout/stderr
-// — those fields simply don't exist on agent.Execution.
+// TestE2E_ExecutionHistoryPersistsAndIsQueryableOverMCP checks execution
+// history end to end: after a real command_exec, the execution is
+// retrievable via execution_list / execution_get, and the persisted row
+// never contains stdout/stderr — those fields simply don't exist on
+// agent.Execution.
 func TestE2E_ExecutionHistoryPersistsAndIsQueryableOverMCP(t *testing.T) {
 	h := newHarness(t)
 
@@ -578,18 +578,16 @@ func TestE2E_FilesystemToolsRoundTrip(t *testing.T) {
 	}
 }
 
-// TestE2E_CommandReadSandboxDeniesWriteAndNetwork covers that
-// command_read must deny a write outside its scratch directory and
-// deny network access, driven end to end over MCP against a real
-// sandboxed OS process.
+// TestE2E_CommandReadSandboxDeniesWriteAndNetwork checks that command_read
+// denies a write outside its scratch directory and denies network access,
+// driven end to end over MCP against a real sandboxed OS process.
 func TestE2E_CommandReadSandboxDeniesWriteAndNetwork(t *testing.T) {
 	h := newHarness(t)
 
 	// h.callTool fails the test on any tool error, so the "unsupported"
-	// skip case (this Agent's kernel couldn't support the sandbox, per
-	// addendum §4's capability-wiring note) is checked by calling the MCP
-	// client directly instead, to inspect the tool error before deciding
-	// whether to skip or fail.
+	// skip case (this Agent's kernel couldn't support the sandbox) is
+	// checked by calling the MCP client directly instead, to inspect the
+	// tool error before deciding whether to skip or fail.
 	target := filepath.Join(t.TempDir(), "should-not-exist")
 	res, err := h.mcpClient.CallTool(context.Background(), &mcp.CallToolParams{
 		Name:      "command_read",
@@ -636,8 +634,8 @@ func TestE2E_CommandReadSandboxDeniesWriteAndNetwork(t *testing.T) {
 
 	// The sandbox's kernel support is now confirmed (the write-denial
 	// call above didn't skip), so this second call can safely use the
-	// fail-fast h.callTool: addendum §4's verification requires the
-	// network-denial case to also be a real e2e check, not mocked.
+	// fail-fast h.callTool: the network-denial case must also be a
+	// real e2e check, not mocked.
 	ln, netErr := net.Listen("tcp", "127.0.0.1:0")
 	if netErr != nil {
 		t.Fatalf("Listen: %v", netErr)

@@ -54,15 +54,18 @@ loginctl enable-linger "$USER"              # keep it running after logout
 systemctl --user enable --now command-relay-agent
 ```
 
-自動更新(デフォルトで有効。`AUTO_UPDATE_ENABLED=false` で無効化できる)を使う場合、Agent は起動中バイナリ自身のファイルを新しいバイナリで置き換える。上記の `sudo cp ... /usr/local/bin/` のように root 所有・非特権ユーザー書き込み不可のパスに配置していると、この置き換えは失敗しログに記録されるだけで自動更新は機能しない。自動更新を使うなら、バイナリは Agent を実行するユーザー自身が書き込み可能な場所(例: `~/.local/bin/command-relay-agent`)に配置し、`ExecStart` をそのパスに合わせて `systemctl --user edit` で上書きすること。
+Auto-update is enabled by default (set `AUTO_UPDATE_ENABLED=false` to disable it). When it runs, the Agent replaces its own running binary file with the new one. If the binary lives in a root-owned path that the unprivileged user cannot write to, such as the `sudo cp ... /usr/local/bin/` above, the replacement fails, is only logged, and auto-update does not work. To use auto-update, place the binary somewhere the user running the Agent can write (for example `~/.local/bin/command-relay-agent`) and override `ExecStart` to that path with `systemctl --user edit`.
 
 ## 🔧 Development
 
 ```bash
-go test ./...
 go build ./...
+go vet ./...
+go test ./...
 docker build -t command-relay-mcp .
 ```
+
+See [AGENTS.md](AGENTS.md) for contributor and coding-agent guidance.
 
 ## 📄 License
 

@@ -23,14 +23,13 @@ func TestRegistry_RegisterGetUnregister(t *testing.T) {
 	}
 }
 
-// TestRegistry_ReconnectRaceDoesNotEvictNewConnection covers that
-// "新しい接続を採用し、古い接続を close" — the new connection must
-// remain the one the registry serves, even once the old connection's
-// readLoop returns (from Register's own old.Close(), in the real
-// wsserver flow) and fires its own deferred Unregister(old). Registered
-// directly rather than via Register(), which would call old.Close() and
-// panic on these bare test AgentConns' nil ws field — irrelevant to the
-// identity check this test targets.
+// TestRegistry_ReconnectRaceDoesNotEvictNewConnection checks that the new
+// connection wins on reconnect — it must remain the one the registry
+// serves, even once the old connection's readLoop returns (from Register's
+// own old.Close(), in the real wsserver flow) and fires its own deferred
+// Unregister(old). Registered directly rather than via Register(), which
+// would call old.Close() and panic on these bare test AgentConns' nil ws
+// field — irrelevant to the identity check this test targets.
 func TestRegistry_ReconnectRaceDoesNotEvictNewConnection(t *testing.T) {
 	reg := NewRegistry()
 	oldConn := &AgentConn{deviceID: "pine"}

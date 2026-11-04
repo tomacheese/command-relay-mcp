@@ -56,7 +56,7 @@ func TestCommandExec_TimeoutDoesNotKillProcess(t *testing.T) {
 		t.Fatalf("res = %+v", res)
 	}
 
-	// Base spec §8.5: the process keeps running; process.wait picks it up later.
+	// The process keeps running; process.wait picks it up later.
 	rec, ok := h.mgr.Get(res.ProcessID)
 	if !ok {
 		t.Fatal("process record vanished after exec timeout")

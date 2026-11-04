@@ -20,12 +20,11 @@ type FileHandlers struct{}
 
 func NewFileHandlers() *FileHandlers { return &FileHandlers{} }
 
-// validatePath rejects malformed-input cases (empty path, NUL byte)
-// and resolves the rest through filepath.Clean/Abs so a ".." segment
-// is interpreted the same way the OS interprets it, rather than
-// trusted string concatenation. V1 does not fence off any part of the
-// host filesystem — this is a robustness fix, not an access-control
-// boundary.
+// validatePath rejects malformed-input cases (empty path, NUL byte) and
+// resolves the rest through filepath.Clean/Abs so a ".." segment is
+// interpreted the same way the OS interprets it, rather than trusted
+// string concatenation. The Agent does not fence off any part of the host
+// filesystem — this is a robustness fix, not an access-control boundary.
 func validatePath(path string) (string, *proto.RPCError) {
 	if path == "" {
 		return "", &proto.RPCError{Code: proto.ErrInvalidRequest, Message: "path must not be empty"}
@@ -173,7 +172,7 @@ type FileWriteParams struct {
 }
 
 // Write implements file.write. Not atomic — a partial write on crash
-// is an accepted risk in this V1 implementation.
+// is an accepted risk.
 func (h *FileHandlers) Write(ctx context.Context, raw json.RawMessage) (any, *proto.RPCError) {
 	var p FileWriteParams
 	if err := json.Unmarshal(raw, &p); err != nil {

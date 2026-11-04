@@ -25,7 +25,7 @@ func NewRegistry() *Registry {
 }
 
 // Register replaces any existing connection for the same device_id,
-// closing the old one ("新しい接続を採用し、古い接続を close").
+// closing the old one (the new connection wins).
 func (r *Registry) Register(c *AgentConn) {
 	r.mu.Lock()
 	old, existed := r.conns[c.deviceID]

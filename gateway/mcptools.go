@@ -43,14 +43,13 @@ func deviceCall(ctx context.Context, reg *Registry, deviceID, method string, par
 	return conn.Call(ctx, method, params)
 }
 
-// NewMCPServer registers every V1 tool group against the given
+// NewMCPServer registers every tool group against the given
 // Registry, for Linux only. Every tool is registered unconditionally
 // regardless of any device's advertised capabilities
-// (proto.Capabilities): the "MCP tool 呼び出しはunsupported で
-// 失敗させる" requirement is met entirely by the Agent's own per-call
-// capability check (e.g. CommandHandlers.Read returning ErrUnsupported
-// when sandboxMgr is nil), not by the Gateway declining to register or
-// route the tool.
+// (proto.Capabilities): an unsupported capability is reported entirely
+// by the Agent's own per-call capability check (e.g.
+// CommandHandlers.Read returning ErrUnsupported when sandboxMgr is
+// nil), not by the Gateway declining to register or route the tool.
 func NewMCPServer(reg *Registry) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "command-relay-mcp", Version: version.Version}, nil)
 

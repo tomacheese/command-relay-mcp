@@ -10,11 +10,11 @@ before:
     - go mod tidy
 
 builds:
-  # Only the Agent is released as a standalone binary (base spec §9's
-  # systemd deployment). The Gateway is Docker-only (see release.yml) and
+  # Only the Agent is released as a standalone binary (deployed as a
+  # systemd service). The Gateway is Docker-only (see release.yml) and
   # only the Agent uses the Linux-only Landlock/namespace backend
-  # (internal/backend/*_linux.go — addendum's explicit non-goal: no
-  # Windows Agent), so this never targets darwin/windows.
+  # (internal/backend/*_linux.go — there is no Windows Agent), so this
+  # never targets darwin/windows.
   - id: agent
     main: ./agent/cmd
     binary: command-relay-agent

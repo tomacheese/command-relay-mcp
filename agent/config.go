@@ -47,7 +47,7 @@ func LoadConfig() Config {
 
 // parseShellCommand splits a whitespace-separated shell invocation, e.g.
 // "/bin/bash -lc" -> []string{"/bin/bash", "-lc"}. Shell paths containing
-// spaces are not supported — no V1 deployment needs one.
+// spaces are not supported — no deployment needs one.
 func parseShellCommand(s string) []string {
 	return strings.Fields(s)
 }

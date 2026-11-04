@@ -193,11 +193,10 @@ type fakeCodedError struct{ code int }
 func (e *fakeCodedError) Error() string { return fmt.Sprintf("fake sqlite error code %d", e.code) }
 func (e *fakeCodedError) Code() int     { return e.code }
 
-// TestIsSQLiteBusy_OnlyMatchesBusyCode covers the retry-safety
-// requirement: isSQLiteBusy must recognize SQLITE_BUSY under
-// modernc.org/sqlite's always-on extended result codes (a bare code and
-// an extended busy code alike), while not treating a non-busy error
-// (e.g. a constraint violation) as retryable.
+// TestIsSQLiteBusy_OnlyMatchesBusyCode checks retry safety: isSQLiteBusy
+// must recognize SQLITE_BUSY under modernc.org/sqlite's always-on extended
+// result codes (a bare code and an extended busy code alike), while not
+// treating a non-busy error (e.g. a constraint violation) as retryable.
 func TestIsSQLiteBusy_OnlyMatchesBusyCode(t *testing.T) {
 	const sqliteBusyCode = 5           // SQLITE_BUSY
 	const sqliteBusySnapshotCode = 517 // SQLITE_BUSY_SNAPSHOT, an extended code sharing primary code 5
