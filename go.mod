@@ -4,7 +4,7 @@ go 1.26.5
 
 require (
 	github.com/coder/websocket v1.8.15
-	github.com/landlock-lsm/go-landlock v0.11.1
+	github.com/landlock-lsm/go-landlock v0.11.2
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	modernc.org/sqlite v1.62.0
 )
