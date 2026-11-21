@@ -183,7 +183,24 @@ func (h *ProcessHandlers) Write(ctx context.Context, raw json.RawMessage) (any, 
 	if !ok {
 		return nil, notFound("process_id not found: " + p.ProcessID)
 	}
-	if _, err := rec.stdin().Write([]byte(p.Data)); err != nil {
+	stdin := rec.stdin()
+	written := make(chan error, 1)
+	go func() {
+		_, err := stdin.Write([]byte(p.Data))
+		written <- err
+	}()
+
+	var err error
+	select {
+	case err = <-written:
+	case <-ctx.Done():
+		// Closing stdin releases a write blocked on a full pipe, so shutdown can drain this handler.
+		_ = stdin.Close()
+		if err = <-written; err != nil {
+			err = ctx.Err()
+		}
+	}
+	if err != nil {
 		log.Printf("agent: process-management failure: stdin write to process %s failed: %v", p.ProcessID, err)
 		return nil, &proto.RPCError{Code: proto.ErrInternal, Message: err.Error()}
 	}
