@@ -5,10 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"command-relay-mcp/internal/proto"
 )
@@ -74,18 +77,39 @@ func (h *FileHandlers) Read(ctx context.Context, raw json.RawMessage) (any, *pro
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	info, err := os.Stat(path)
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, osErrorToRPCError(err)
+	}
+	file := os.NewFile(uintptr(fd), path)
+	defer file.Close()
+	data, rpcErr := readOpenedFile(file)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	return FileReadResult{ContentBase64: base64.StdEncoding.EncodeToString(data), Size: int64(len(data))}, nil
+}
+
+func readOpenedFile(file *os.File) ([]byte, *proto.RPCError) {
+	info, err := file.Stat()
+	if err != nil {
+		return nil, osErrorToRPCError(err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, &proto.RPCError{Code: proto.ErrInvalidRequest, Message: "file.read only supports regular files"}
 	}
 	if info.Size() > proto.MaxFileReadBytes {
 		return nil, &proto.RPCError{Code: proto.ErrFileTooLarge, Message: fmt.Sprintf("file size %d exceeds the %d byte limit", info.Size(), proto.MaxFileReadBytes)}
 	}
-	data, err := os.ReadFile(path)
+
+	data, err := io.ReadAll(io.LimitReader(file, proto.MaxFileReadBytes+1))
 	if err != nil {
 		return nil, osErrorToRPCError(err)
 	}
-	return FileReadResult{ContentBase64: base64.StdEncoding.EncodeToString(data), Size: int64(len(data))}, nil
+	if int64(len(data)) > proto.MaxFileReadBytes {
+		return nil, &proto.RPCError{Code: proto.ErrFileTooLarge, Message: fmt.Sprintf("file size exceeds the %d byte limit", proto.MaxFileReadBytes)}
+	}
+	return data, nil
 }
 
 type FileStatParams struct {
