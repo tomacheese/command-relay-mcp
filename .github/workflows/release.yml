@@ -122,6 +122,12 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.merged == true && github.base_ref || github.event.pull_request.head.sha || github.sha }}
+          # Do not leave the job token in .git/config, where fork code run by
+          # later steps (go test, go mod download) could read it.
+          persist-credentials: false
+          # Fork PR code is checked out only after the fork-pr-build
+          # Environment approval (approval-gate), same as docker-ci-gateway.
+          allow-unsafe-pr-checkout: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository }}
 
       - name: Fetch tags
         # docker-ci-gateway has already pushed the tag for this commit
