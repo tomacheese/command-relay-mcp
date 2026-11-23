@@ -29,7 +29,7 @@ builds:
       - -s -w -X command-relay-mcp/internal/version.Version={{.Version}}
 
 archives:
-  - format: tar.gz
+  - formats: [tar.gz]
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
