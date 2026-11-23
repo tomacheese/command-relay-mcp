@@ -124,15 +124,24 @@ func (h *CommandHandlers) Exec(ctx context.Context, raw json.RawMessage) (any, *
 		h.recordEndEventually(execID, rec)
 	}
 
-	stdout, stdoutNext, _ := rec.Stdout.ReadFrom(0, proto.MaxCommandOutputBytes)
-	stderr, stderrNext, _ := rec.Stderr.ReadFrom(0, proto.MaxCommandOutputBytes)
+	stdout, stdoutTruncated := readCapturedOutput(rec.Stdout)
+	stderr, stderrTruncated := readCapturedOutput(rec.Stderr)
 	return CommandExecResult{
 		ProcessID: rec.ID, OSPID: rec.OSPID,
 		Stdout: string(stdout), Stderr: string(stderr),
 		ExitCode: exitCode, TimedOut: timedOut,
-		StdoutTruncated: stdoutNext < rec.Stdout.Len(),
-		StderrTruncated: stderrNext < rec.Stderr.Len(),
+		StdoutTruncated: stdoutTruncated,
+		StderrTruncated: stderrTruncated,
 	}, nil
+}
+
+// readCapturedOutput returns the stream's output capped at
+// proto.MaxCommandOutputBytes. truncated is true when bytes were lost at
+// either end: dropped from the head by the ring buffer, or left unread
+// after the cap.
+func readCapturedOutput(rb *RingBuffer) (data []byte, truncated bool) {
+	data, next, truncatedBefore := rb.ReadFrom(0, proto.MaxCommandOutputBytes)
+	return data, truncatedBefore || next < rb.Len()
 }
 
 // recordEndEventually completes execID's history row once its process
@@ -203,8 +212,8 @@ func (h *CommandHandlers) Read(ctx context.Context, raw json.RawMessage) (any, *
 		return nil, &proto.RPCError{Code: proto.ErrSandboxViolation, Message: "sandbox setup failed for this call"}
 	}
 
-	stdout, stdoutNext, _ := rec.Stdout.ReadFrom(0, proto.MaxCommandOutputBytes)
-	stderr, stderrNext, _ := rec.Stderr.ReadFrom(0, proto.MaxCommandOutputBytes)
+	stdout, stdoutTruncated := readCapturedOutput(rec.Stdout)
+	stderr, stderrTruncated := readCapturedOutput(rec.Stderr)
 	return CommandExecResult{
 		ProcessID: rec.ID, OSPID: rec.OSPID,
 		Stdout: string(stdout), Stderr: string(stderr),
@@ -213,7 +222,7 @@ func (h *CommandHandlers) Read(ctx context.Context, raw json.RawMessage) (any, *
 		// denied a mutation attempt exactly as intended — never true on
 		// timeout, since there is no exit code yet.
 		SandboxViolation: !timedOut && exitCode != nil && *exitCode != 0,
-		StdoutTruncated:  stdoutNext < rec.Stdout.Len(),
-		StderrTruncated:  stderrNext < rec.Stderr.Len(),
+		StdoutTruncated:  stdoutTruncated,
+		StderrTruncated:  stderrTruncated,
 	}, nil
 }

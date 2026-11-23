@@ -305,3 +305,34 @@ func TestCommandExec_CapsStdoutAtMaxCommandOutputBytes(t *testing.T) {
 		t.Fatal("StderrTruncated = true, want false since stderr produced no output")
 	}
 }
+
+// TestCommandExec_FlagsHeadLossFromSmallBuffer verifies that output dropped
+// from the head of a ring buffer smaller than the response cap is reported
+// as truncated on both streams.
+func TestCommandExec_FlagsHeadLossFromSmallBuffer(t *testing.T) {
+	const bufBytes = 1 << 10
+	mgr := NewManager(backend.NewLinuxBackend([]string{"/bin/bash", "-lc"}), bufBytes, bufBytes, time.Hour)
+	hist, err := OpenHistoryStore(filepath.Join(t.TempDir(), "history.db"))
+	if err != nil {
+		t.Fatalf("OpenHistoryStore: %v", err)
+	}
+	t.Cleanup(func() { hist.Close() })
+	h := NewCommandHandlers(mgr, nil, hist, "pine", 5000)
+
+	cmd := "head -c 3072 /dev/zero | tr '\\0' 'a'; head -c 3072 /dev/zero | tr '\\0' 'b' >&2"
+	params, _ := json.Marshal(CommandExecParams{Command: cmd, TimeoutMs: 5000})
+	result, rpcErr := h.Exec(context.Background(), params)
+	if rpcErr != nil {
+		t.Fatalf("rpcErr: %+v", rpcErr)
+	}
+	res := result.(CommandExecResult)
+	if len(res.Stdout) != bufBytes || len(res.Stderr) != bufBytes {
+		t.Fatalf("len(Stdout), len(Stderr) = %d, %d, want %d each", len(res.Stdout), len(res.Stderr), bufBytes)
+	}
+	if !res.StdoutTruncated {
+		t.Fatal("StdoutTruncated = false, want true since the buffer dropped the head of stdout")
+	}
+	if !res.StderrTruncated {
+		t.Fatal("StderrTruncated = false, want true since the buffer dropped the head of stderr")
+	}
+}
