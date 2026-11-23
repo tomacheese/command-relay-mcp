@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"golang.org/x/sys/unix"
+
 	"command-relay-mcp/internal/proto"
 )
 
@@ -209,5 +211,83 @@ func TestFileRead_RejectsOversizedFileWithoutLoadingIt(t *testing.T) {
 	}
 	if rpcErr.Code != proto.ErrFileTooLarge {
 		t.Fatalf("rpcErr.Code = %q, want %q", rpcErr.Code, proto.ErrFileTooLarge)
+	}
+}
+
+func TestFileRead_EnforcesLimitOnOpenedFileAfterGrowth(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "growing.bin")
+	if err := os.WriteFile(path, []byte("initial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	opened, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer opened.Close()
+	initialInfo, err := opened.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initialInfo.Size() > proto.MaxFileReadBytes {
+		t.Fatalf("initial size = %d, want at most %d", initialInfo.Size(), proto.MaxFileReadBytes)
+	}
+
+	appender, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := appender.Truncate(proto.MaxFileReadBytes + 1); err != nil {
+		appender.Close()
+		t.Fatal(err)
+	}
+	if err := appender.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, rpcErr := readOpenedFile(opened)
+	if rpcErr == nil || rpcErr.Code != proto.ErrFileTooLarge {
+		t.Fatalf("readOpenedFile error = %+v, want %q", rpcErr, proto.ErrFileTooLarge)
+	}
+}
+
+func TestFileRead_AcceptsFileAtLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "limit.bin")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(proto.MaxFileReadBytes); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	params, _ := json.Marshal(FileReadParams{Path: path})
+	result, rpcErr := (&FileHandlers{}).Read(context.Background(), params)
+	if rpcErr != nil {
+		t.Fatalf("Read: %+v", rpcErr)
+	}
+	if got := result.(FileReadResult).Size; got != proto.MaxFileReadBytes {
+		t.Fatalf("Read size = %d, want %d", got, proto.MaxFileReadBytes)
+	}
+}
+
+func TestFileRead_RejectsNonRegularFiles(t *testing.T) {
+	fifo := filepath.Join(t.TempDir(), "pipe")
+	if err := unix.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{fifo, "/dev/zero"} {
+		t.Run(path, func(t *testing.T) {
+			params, _ := json.Marshal(FileReadParams{Path: path})
+			_, rpcErr := (&FileHandlers{}).Read(context.Background(), params)
+			if rpcErr == nil || rpcErr.Code != proto.ErrInvalidRequest {
+				t.Fatalf("Read error = %+v, want invalid_request", rpcErr)
+			}
+		})
 	}
 }
