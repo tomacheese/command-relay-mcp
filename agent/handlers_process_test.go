@@ -441,3 +441,53 @@ func TestProcessRead_ClampsMaxBytesToServerCap(t *testing.T) {
 		t.Fatalf("len(Stdout) = %d, want %d (server cap should win over the caller's larger max_bytes)", len(res.Stdout), proto.MaxCommandOutputBytes)
 	}
 }
+
+func TestProcessWrite_CancelUnblocksFullPipe(t *testing.T) {
+	h := newTestProcessHandlers(t)
+	startResultAny, rpcErr := h.Start(context.Background(), mustMarshal(t, ProcessStartParams{Command: "sleep 60"}))
+	if rpcErr != nil {
+		t.Fatalf("Start: %+v", rpcErr)
+	}
+	startResult := startResultAny.(ProcessStartResult)
+	t.Cleanup(func() {
+		h.Terminate(context.Background(), mustMarshal(t, ProcessTerminateParams{ProcessID: startResult.ProcessID, GraceMs: 100}))
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	data := strings.Repeat("x", 1<<20)
+	done := make(chan *proto.RPCError, 1)
+	go func() {
+		_, err := h.Write(ctx, mustMarshal(t, ProcessWriteParams{ProcessID: startResult.ProcessID, Data: data}))
+		done <- err
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil || err.Code != proto.ErrInternal {
+			t.Fatalf("rpcErr = %+v, want internal_error", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Write did not return after context cancellation")
+	}
+}
+
+func TestProcessWrite_UncancelledContextSucceedsAndKeepsStdinOpen(t *testing.T) {
+	h := newTestProcessHandlers(t)
+	startResultAny, rpcErr := h.Start(context.Background(), mustMarshal(t, ProcessStartParams{Command: "cat"}))
+	if rpcErr != nil {
+		t.Fatalf("Start: %+v", rpcErr)
+	}
+	startResult := startResultAny.(ProcessStartResult)
+	t.Cleanup(func() {
+		h.Terminate(context.Background(), mustMarshal(t, ProcessTerminateParams{ProcessID: startResult.ProcessID, GraceMs: 100}))
+	})
+
+	for _, data := range []string{"one\n", "two\n"} {
+		if _, rpcErr := h.Write(context.Background(), mustMarshal(t, ProcessWriteParams{ProcessID: startResult.ProcessID, Data: data})); rpcErr != nil {
+			t.Fatalf("Write(%q): %+v", data, rpcErr)
+		}
+	}
+}
