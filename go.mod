@@ -7,7 +7,7 @@ require (
 	github.com/landlock-lsm/go-landlock v0.11.2
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	golang.org/x/sys v0.50.0
-	modernc.org/sqlite v1.62.0
+	modernc.org/sqlite v1.63.0
 )
 
 require (
